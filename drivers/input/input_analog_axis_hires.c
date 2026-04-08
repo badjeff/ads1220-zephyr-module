@@ -50,6 +50,7 @@ struct analog_axis_hires_data {
 	analog_axis_hires_raw_data_t raw_data_cb;
 	struct k_timer timer;
 	struct k_thread thread;
+	bool use_same_adc_ch_cfg;
 
 	K_KERNEL_STACK_MEMBER(thread_stack,
 			      CONFIG_INPUT_ANALOG_AXIS_HIRES_THREAD_STACK_SIZE);
@@ -178,18 +179,41 @@ static void analog_axis_hires_loop(const struct device *dev)
 	int err;
 	int i;
 
-	adc_sequence_init_dt(&axis_cfg_0->adc, &sequence);
+	if (data->use_same_adc_ch_cfg) {
+		adc_sequence_init_dt(&axis_cfg_0->adc, &sequence);
 
-	for (i = 0; i < cfg->num_channels; i++) {
-		const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];
+		for (i = 0; i < cfg->num_channels; i++) {
+			const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];
+			sequence.channels |= BIT(axis_cfg->adc.channel_id);
+		}
 
-		sequence.channels |= BIT(axis_cfg->adc.channel_id);
+		err = adc_read(axis_cfg_0->adc.dev, &sequence);
+		if (err < 0) {
+			LOG_ERR("Could not read (%d)", err);
+			return;
+		}
 	}
+	else { // !data->use_same_adc_ch_cfg
+		for (i = 0; i < cfg->num_channels; i++) {
+			const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];
 
-	err = adc_read(axis_cfg_0->adc.dev, &sequence);
-	if (err < 0) {
-		LOG_ERR("Could not read (%d)", err);
-		return;
+			err = adc_channel_setup_dt(&axis_cfg->adc);
+			if (err < 0) {
+				LOG_ERR("Could not setup channel #%d (%d)", i, err);
+				return;
+			}
+
+			sequence.buffer = &bufs[i];
+			sequence.buffer_size = sizeof(bufs[i]);
+			sequence.channels = BIT(axis_cfg->adc.channel_id);
+			adc_sequence_init_dt(&axis_cfg->adc, &sequence);
+
+			err = adc_read(axis_cfg->adc.dev, &sequence);
+			if (err < 0) {
+				LOG_ERR("Could not read channel %d (%d)", i, err);
+				return;
+			}
+		}
 	}
 
 	k_sem_take(&data->cal_lock, K_FOREVER);
@@ -244,6 +268,41 @@ static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 	int i;
 
 	LOG_INF("Analog-axis-hires thread started");
+
+	LOG_INF("Checking if all channels use same ADC");
+	struct adc_dt_spec first_adc_spec = cfg->channel_cfg[0].adc;
+	struct adc_channel_cfg first_adc_ch_cfg = first_adc_spec.channel_cfg;
+	const struct device *first_adc_dev = cfg->channel_cfg[0].adc.dev;
+	bool same_adc = true;
+	for (i = 1; i < cfg->num_channels; i++) {
+		const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];
+		if (axis_cfg->adc.dev != first_adc_dev) {
+			same_adc = false;
+			break;
+		} else {
+			struct adc_dt_spec adc_spec = axis_cfg->adc;
+			struct adc_channel_cfg adc_ch_cfg = adc_spec.channel_cfg;
+			same_adc &= same_adc && adc_ch_cfg.gain == first_adc_ch_cfg.gain;
+			same_adc &= same_adc && adc_ch_cfg.reference == first_adc_ch_cfg.reference;
+			same_adc &= same_adc && adc_ch_cfg.acquisition_time == first_adc_ch_cfg.acquisition_time;
+			same_adc &= same_adc && adc_ch_cfg.differential == first_adc_ch_cfg.differential;
+			#ifdef CONFIG_ADC_CONFIGURABLE_INPUTS
+			same_adc &= same_adc && adc_ch_cfg.input_positive == first_adc_ch_cfg.input_positive;
+			same_adc &= same_adc && adc_ch_cfg.input_negative == first_adc_ch_cfg.input_negative;
+			#endif
+			#ifdef CONFIG_ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN
+			same_adc &= same_adc && adc_ch_cfg.current_source_pin_set == first_adc_ch_cfg.current_source_pin_set;
+			same_adc &= same_adc && adc_ch_cfg.current_source_pin[0] == first_adc_ch_cfg.current_source_pin[0];
+			same_adc &= same_adc && adc_ch_cfg.current_source_pin[1] == first_adc_ch_cfg.current_source_pin[1];
+			#endif
+			#ifdef CONFIG_ADC_CONFIGURABLE_VBIAS_PIN
+			same_adc &= same_adc && adc_ch_cfg.vbias_pins == first_adc_ch_cfg.vbias_pins;
+			#endif
+			if (!same_adc) break;
+		}
+	}
+	LOG_INF("All channels use same ADC: %s", same_adc ? "yes" : "no");
+	data->use_same_adc_ch_cfg = same_adc;
 
 	for (i = 0; i < cfg->num_channels; i++) {
 		const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];

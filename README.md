@@ -4,7 +4,7 @@ This module provides two drivers for high-resolution analog input:
 
 1. **ADS1220 ADC Driver** - Texas Instruments 24-bit SPI ADC with 4 differential input channels, configurable gain (1-128x), multiple data rates (20-1000 SPS), and optional DRDY interrupt support.
 
-2. **Analog Axis Hi-Res Input Driver** - Fork of Zephyr's `analog-axis` driver with 24-bit buffering. Provides all other inherited features from original driver.
+2. **Analog Axis Hi-Res Input Driver** - Fork of Zephyr's `analog-axis` driver with 24-bit buffering, and multi-configuration per device. Provides all other inherited features from original driver.
 
 ## Features
 
@@ -20,6 +20,7 @@ This module provides two drivers for high-resolution analog input:
 ### Analog Axis Hi-Res Input Driver
 - High-resolution ADC support (16-bit+)
 - int32_t buffer for 24-bit ADC values
+- Multi-configuration per device
 - Other inherited features from original driver
 
 ## Installation
@@ -113,6 +114,20 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
             zephyr,input-positive = <2>;
             zephyr,input-negative = <3>;
         };
+
+        /*
+        Setup another channel wiring same pins with faster data rate at 300 SPS
+        */
+        adc_ads1220_ch1: channel@1 {
+            reg = <1>;
+            zephyr,resolution = <24>;
+            zephyr,gain = "ADC_GAIN_128";
+            zephyr,reference = "ADC_REF_EXTERNAL1";
+            zephyr,acquisition-time = <300>; // 300 SPS > 125 Hz
+            zephyr,input-positive = <2>;
+            zephyr,input-negative = <3>;
+        };
+
     };
 };
 
@@ -136,10 +151,9 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
 
             /* netural raw value from Wheatstone bridges via ADS1220 */
             /* NOTE: depends on zephyr,gain in adc_ads1220_ch0 */
-            in-min = <263100>;
+            in-min = <273100>;
             in-max = <1730000>;
-
-            /* in-deadzone = <5>; // dont't need for load cell */
+            in-deadzone = <5>;
 
             /* clamp max output to 16 bit */
             out-min = <0>;
@@ -147,6 +161,22 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
 
             zephyr,axis = <INPUT_ABS_Y>;
         };
+
+        /* Setup another axis to read from 2nd faster channel */
+        axis-y-from-300-sps {
+            io-channels = <&adc_ads1220 1>; // <--- different here
+
+            in-min = <273100>;
+            in-max = <1730000>;
+            in-deadzone = <5>;
+
+            /* clamp max output to 12 bit */
+            out-min = <0>;
+            out-max = <4095>; // <--- different here too
+
+            zephyr,axis = <INPUT_ABS_Y>;
+        };
+
     };
 };
 ```
@@ -236,7 +266,9 @@ CONFIG_PM_DEVICE_RUNTIME=y
 
 3. **DRDY Interrupt**: If the DRDY GPIO is not configured, the driver uses timed polling based on the configured data rate (with 10% margin).
 
-4. **Power Consumption**: The poll mode driver continuously samples. For battery-powered devices, consider reducing `poll-period-ms` or implementing dynamic polling based on activity.
+4. **Multi-Configuration Per Device**: The input driver supports multiple different configuration per device. It automatically detects if all axes share the same ADC configuration (gain, reference, acquisition time, etc.). If they do, it uses a single ADC sequence for efficient reading. If configurations differ, it re-sets up device configuration for each axis individually before reading.
+
+5. **Power Consumption**: The poll mode driver continuously samples. For battery-powered devices, consider reducing `poll-period-ms` or implementing dynamic polling based on activity.
 
 ## License
 

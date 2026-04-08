@@ -122,6 +122,9 @@ struct ads1220_data {
 	int32_t *buffer_ptr;
 	bool has_drdy;
 	k_timeout_t ready_time;
+	uint8_t last_config0;
+	uint8_t last_config1;
+	uint8_t last_config2;
 };
 
 static inline int ads1220_transceive(const struct device *dev,
@@ -199,12 +202,11 @@ static int ads1220_setup(const struct device *dev,
 	const struct ads1220_config *cfg = dev->config;
 	struct ads1220_data *data = dev->data;
 
-	ads1220_reg_read(dev, ADS1220_CONFIG0_REG, &config0, 1);
-	ads1220_reg_read(dev, ADS1220_CONFIG1_REG, &config1, 1);
-	ads1220_reg_read(dev, ADS1220_CONFIG2_REG, &config2, 1);
-	LOG_DBG("setup: read initial CONFIG0=0x%02X", config0);
-	LOG_DBG("setup: read initial CONFIG1=0x%02X", config1);
-	LOG_DBG("setup: read initial CONFIG2=0x%02X", config2);
+	config0 = data->last_config0;
+	config1 = data->last_config1;
+	config2 = data->last_config2;
+	// LOG_DBG("setup: last active CONFIG0/1/2=0x%02X / 0x%02X / 0x%02X", 
+	// 	config0, config1, config2);
 
 	gain = channel_cfg->gain;
 
@@ -304,9 +306,9 @@ static int ads1220_setup(const struct device *dev,
 	config0 = (config0 & ~(ADS1220_MUX_MASK | ADS1220_GAIN_MASK)) |
 		   FIELD_PREP(ADS1220_MUX_MASK, mux_value) |
 		   FIELD_PREP(ADS1220_GAIN_MASK, gain);
-	LOG_DBG("CONFIG0: MUX=0x%02X, GAIN=0x%02X",
-		(unsigned int)(config0 & ADS1220_MUX_MASK),
-		(unsigned int)(config0 & ADS1220_GAIN_MASK));
+	// LOG_DBG("CONFIG0: MUX=0x%02X, GAIN=0x%02X",
+	// 	(unsigned int)(config0 & ADS1220_MUX_MASK),
+	// 	(unsigned int)(config0 & ADS1220_GAIN_MASK));
 
 	if (acq_time == ADC_ACQ_TIME_DEFAULT) {
 		data_rate = ADS1220_DR_1000;
@@ -354,7 +356,7 @@ static int ads1220_setup(const struct device *dev,
 	config1 = (config1 & ~(ADS1220_DR_MASK | ADS1220_MODE_MASK)) |
 		  data_rate | FIELD_PREP(ADS1220_MODE_MASK, 1);
 	data->ready_time = K_USEC(ready_time_us + (ready_time_us / 10));
-	LOG_DBG("CONFIG1: DR=0x%02X", (unsigned int)(config1 & ADS1220_DR_MASK));
+	// LOG_DBG("CONFIG1: DR=0x%02X", (unsigned int)(config1 & ADS1220_DR_MASK));
 
 	switch (channel_cfg->reference) {
 	case ADC_REF_INTERNAL:
@@ -370,7 +372,9 @@ static int ads1220_setup(const struct device *dev,
 		vref_value = ADS1220_VREF_AVDD;
 		break;
 	default:
-		LOG_DBG("Unsupported reference, using default internal");
+		// LOG_DBG("Unsupported reference, using default internal");
+		vref_value = ADS1220_VREF_INTERNAL;
+		break;
 	}
 
 	if (cfg->low_side_power_switch) {
@@ -379,51 +383,55 @@ static int ads1220_setup(const struct device *dev,
 
 	config2 = (config2 & ~0x30) | (vref_value << 4);
 	config2 = (config2 & ~0x08) | psw_value;
-	LOG_DBG("CONFIG2: VREF=0x%02X, PSW=%d",
-		(config2 >> 4) & 0x03, (config2 >> 3) & 0x01);
+	// LOG_DBG("CONFIG2: VREF=0x%02X, PSW=%d",
+	// 	(config2 >> 4) & 0x03, (config2 >> 3) & 0x01);
 
 	uint8_t read_config0, read_config1, read_config2;
 
-	// LOG_DBG("writing CONFIG0=0x%02X", config0);
-	ret = ads1220_reg_write(dev, ADS1220_CONFIG0_REG, config0);
-	if (ret < 0) {
-		return ret;
-	}
-	ads1220_reg_read(dev, ADS1220_CONFIG0_REG, &read_config0, 1);
-	if (read_config0 != config0) {
-		LOG_ERR("config0 mismatch! 0x%02X != 0x%02X", config0, read_config0);
-		return -EIO;
-	} else {
-		LOG_DBG("wrote CONFIG0=0x%02X", read_config0);
-	}
-
-	// LOG_DBG("writing CONFIG1=0x%02X", config1);
-	ret = ads1220_reg_write(dev, ADS1220_CONFIG1_REG, config1);
-	if (ret < 0) {
-		return ret;
-	}
-	ads1220_reg_read(dev, ADS1220_CONFIG1_REG, &read_config1, 1);
-	if (read_config1 != config1) {
-		LOG_ERR("config1 mismatch! 0x%02X != 0x%02X", config1, read_config1);
-		return -EIO;
-	} else {
-		LOG_DBG("wrote CONFIG1=0x%02X", read_config1);
+	if (config0 != data->last_config0) {
+		ret = ads1220_reg_write(dev, ADS1220_CONFIG0_REG, config0);
+		if (ret < 0) {
+			return ret;
+		}
+		ads1220_reg_read(dev, ADS1220_CONFIG0_REG, &read_config0, 1);
+		if (read_config0 != config0) {
+			LOG_ERR("config0 mismatch! 0x%02X != 0x%02X", config0, read_config0);
+			return -EIO;
+		} else {
+			// LOG_DBG("wrote CONFIG0=0x%02X", read_config0);
+			data->last_config0 = config0;
+		}
 	}
 
-	// LOG_DBG("writing CONFIG2=0x%02X", config2);
-	ret = ads1220_reg_write(dev, ADS1220_CONFIG2_REG, config2);
-	if (ret < 0) {
-		return ret;
-	}
-	ads1220_reg_read(dev, ADS1220_CONFIG2_REG, &read_config2, 1);
-	if (read_config2 != config2) {
-		LOG_ERR("config2 mismatch! 0x%02X != 0x%02X", config2, read_config2);
-		return -EIO;
-	} else {
-		LOG_DBG("wrote CONFIG2=0x%02X", read_config2);
+	if (config1 != data->last_config1) {
+		ret = ads1220_reg_write(dev, ADS1220_CONFIG1_REG, config1);
+		if (ret < 0) {
+			return ret;
+		}
+		ads1220_reg_read(dev, ADS1220_CONFIG1_REG, &read_config1, 1);
+		if (read_config1 != config1) {
+			LOG_ERR("config1 mismatch! 0x%02X != 0x%02X", config1, read_config1);
+			return -EIO;
+		} else {
+			// LOG_DBG("wrote CONFIG1=0x%02X", read_config1);
+			data->last_config1 = config1;
+		}
 	}
 
-	LOG_INF("ads1220_setup done");
+	if (config2 != data->last_config2) {
+		ret = ads1220_reg_write(dev, ADS1220_CONFIG2_REG, config2);
+		if (ret < 0) {
+			return ret;
+		}
+		ads1220_reg_read(dev, ADS1220_CONFIG2_REG, &read_config2, 1);
+		if (read_config2 != config2) {
+			LOG_ERR("config2 mismatch! 0x%02X != 0x%02X", config2, read_config2);
+			return -EIO;
+		} else {
+			// LOG_DBG("wrote CONFIG2=0x%02X", read_config2);
+			data->last_config2 = config2;
+		}
+	}
 
 	return 0;
 }
@@ -720,6 +728,9 @@ static int ads1220_init(const struct device *dev)
 
 	data->has_drdy = false;
 	data->ready_time = K_USEC(1000);
+	data->last_config0 = 0x00;
+	data->last_config1 = 0x00;
+	data->last_config2 = 0x00;
 
 	ret = ads1220_configure_gpio(dev);
 	if (ret != 0) {
