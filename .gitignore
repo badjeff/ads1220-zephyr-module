@@ -1,0 +1,5 @@
+# Header will be copied via drivers/adc/CMakeLists.txt
+drivers/adc/adc_context.h
+
+# DT binding reference
+dts/bindings/ads/adc-controller.yaml

@@ -1,0 +1,5 @@
+# Copyright (c) 2026 badjeff
+# SPDX-License-Identifier: Apache-2.0
+
+rsource "adc/Kconfig"
+rsource "input/Kconfig"

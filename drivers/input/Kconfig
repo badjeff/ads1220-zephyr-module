@@ -1,0 +1,8 @@
+# Copyright (c) 2026 badjeff
+# SPDX-License-Identifier: Apache-2.0
+
+if INPUT
+
+rsource "Kconfig.analog_axis_hires"
+
+endif # INPUT

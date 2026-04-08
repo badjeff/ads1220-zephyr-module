@@ -1,0 +1,30 @@
+# Copyright (c) 2026 badjeff
+# SPDX-License-Identifier: Apache-2.0
+
+description: Texas Instrument 4 channels SPI ADC
+
+compatible: "ti,ads1220"
+
+include: [adc-controller.yaml, spi-device.yaml]
+
+properties:
+  "#io-channel-cells":
+    const: 1
+
+  drdy-gpios:
+    type: phandle-array
+    required: false
+    description: |
+      GPIO for data ready, becomes active when a conversion result is ready.
+      By default, it is active low signal. If not specified, the driver will
+      use timed polling based on data rate instead of hardware interrupt.
+
+  low-side-power-switch:
+    type: boolean
+    description: |
+      Enable low-side power switch (PSW). When enabled, the low-side switch
+      between AIN3/REFN1 and AVSS is turned on during conversion to reduce
+      input leakage current. This is useful for RTD applications.
+
+io-channel-cells:
+  - input
