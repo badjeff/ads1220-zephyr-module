@@ -11,6 +11,7 @@
 #include <string.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -26,11 +27,15 @@ LOG_MODULE_REGISTER(analog_axis_hires, CONFIG_INPUT_LOG_LEVEL);
 
 struct analog_axis_hires_channel_config {
 	struct adc_dt_spec adc;
+	struct gpio_dt_spec gpio_avdd;
+	bool has_gpio_avdd;
 	int32_t out_min;
 	int32_t out_max;
+	uint16_t axis_type;
 	uint16_t axis;
 	bool invert_input;
 	bool invert_output;
+	bool skip_change_comparator;
 };
 
 struct analog_axis_hires_channel_data {
@@ -179,7 +184,7 @@ static void analog_axis_hires_loop(const struct device *dev)
 	int err;
 	int i;
 
-	if (data->use_same_adc_ch_cfg) {
+	if (data->use_same_adc_ch_cfg && !axis_cfg_0->has_gpio_avdd) {
 		adc_sequence_init_dt(&axis_cfg_0->adc, &sequence);
 
 		for (i = 0; i < cfg->num_channels; i++) {
@@ -193,14 +198,25 @@ static void analog_axis_hires_loop(const struct device *dev)
 			return;
 		}
 	}
-	else { // !data->use_same_adc_ch_cfg
+	else { // has_gpio_avdd || !use_same_adc_ch_cfg
 		for (i = 0; i < cfg->num_channels; i++) {
 			const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];
 
-			err = adc_channel_setup_dt(&axis_cfg->adc);
-			if (err < 0) {
-				LOG_ERR("Could not setup channel #%d (%d)", i, err);
-				return;
+			// LOG_DBG("c: %d has_gpio_avdd: %s", i, axis_cfg->has_gpio_avdd ? "yes" : "no");
+			if (axis_cfg->has_gpio_avdd) {
+				gpio_pin_set_dt(&axis_cfg->gpio_avdd, 1);
+				// k_usleep(150);
+			}
+
+			if (!data->use_same_adc_ch_cfg) {
+				err = adc_channel_setup_dt(&axis_cfg->adc);
+				if (err < 0) {
+					LOG_ERR("Could not setup channel #%d (%d)", i, err);
+					if (axis_cfg->has_gpio_avdd) {
+						gpio_pin_set_dt(&axis_cfg->gpio_avdd, 0);
+					}
+					return;
+				}
 			}
 
 			sequence.buffer = &bufs[i];
@@ -211,7 +227,14 @@ static void analog_axis_hires_loop(const struct device *dev)
 			err = adc_read(axis_cfg->adc.dev, &sequence);
 			if (err < 0) {
 				LOG_ERR("Could not read channel %d (%d)", i, err);
+				if (axis_cfg->has_gpio_avdd) {
+					gpio_pin_set_dt(&axis_cfg->gpio_avdd, 0);
+				}
 				return;
+			}
+
+			if (axis_cfg->has_gpio_avdd) {
+				gpio_pin_set_dt(&axis_cfg->gpio_avdd, 0);
 			}
 		}
 	}
@@ -248,10 +271,16 @@ static void analog_axis_hires_loop(const struct device *dev)
 			out = axis_cfg->out_max - out;
 		}
 
-		// LOG_DBG("%s: ch %d: out: %d %d", dev->name, i, out, axis_data->last_out);
-		if (axis_data->last_out != out) {
-			input_report_abs(dev, axis_cfg->axis, out, true, K_FOREVER);
-			LOG_DBG("%s: ch %d: out: %d (changed) %d (raw)", dev->name, i, out, raw_val);
+		if (axis_cfg->skip_change_comparator) {
+			input_report(dev, axis_cfg->axis_type, axis_cfg->axis, out, true, K_FOREVER);
+			LOG_DBG("%s: ch %d: out: %d raw: %d (raw)", dev->name, i, out, raw_val);
+		}
+		else {
+			// LOG_DBG("%s: ch %d: out: %d %d", dev->name, i, out, axis_data->last_out);
+			if (axis_data->last_out != out) {
+				input_report(dev, axis_cfg->axis_type, axis_cfg->axis, out, true, K_FOREVER);
+				LOG_DBG("%s: ch %d: out: %d (changed) raw: %d", dev->name, i, out, raw_val);
+			}
 		}
 		axis_data->last_out = out;
 	}
@@ -306,14 +335,27 @@ static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 
 	for (i = 0; i < cfg->num_channels; i++) {
 		const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];
+		LOG_INF("Setting up channel %d, ADC channel %d", i, axis_cfg->adc.channel_id);
 
-		LOG_INF("Checking ADC channel %d", i);
+		if (axis_cfg->has_gpio_avdd) {
+			/* Check if AVDD GPIO is defined in device tree */
+			if (!device_is_ready(axis_cfg->gpio_avdd.port)) {
+				LOG_ERR("AVDD GPIO not ready on channel %d", i);
+				return;
+			}
+
+			err = gpio_pin_configure_dt(&axis_cfg->gpio_avdd, GPIO_OUTPUT_INACTIVE);
+			if (err != 0) {
+				LOG_ERR("Setup AVDD GPIO config failed on channel %d (%d)", i, err);
+				return;
+			}
+		}
+
 		if (!adc_is_ready_dt(&axis_cfg->adc)) {
-			LOG_ERR("ADC controller device not ready");
+			LOG_ERR("ADC controller device not ready on channel #%d", i);
 			return;
 		}
 
-		LOG_INF("Setting up channel %d, ADC channel %d", i, axis_cfg->adc.channel_id);
 		err = adc_channel_setup_dt(&axis_cfg->adc);
 		if (err < 0) {
 			LOG_ERR("Could not setup channel #%d (%d)", i, err);
@@ -417,11 +459,15 @@ static int analog_axis_hires_pm_action(const struct device *dev,
 #define ANALOG_AXIS_CHANNEL_CFG_DEF(node_id) \
 	{ \
 		.adc = ADC_DT_SPEC_GET(node_id), \
+		.gpio_avdd = GPIO_DT_SPEC_GET_OR(node_id, avdd_gpios, {0}), \
+		.has_gpio_avdd = DT_PROP_HAS_IDX(node_id, avdd_gpios, 0), \
 		.out_min = (int32_t)DT_PROP(node_id, out_min), \
 		.out_max = (int32_t)DT_PROP(node_id, out_max), \
+		.axis_type = DT_PROP(node_id, zephyr_axis_type), \
 		.axis = DT_PROP(node_id, zephyr_axis), \
 		.invert_input = DT_PROP(node_id, invert_input), \
 		.invert_output = DT_PROP(node_id, invert_output), \
+		.skip_change_comparator = DT_PROP(node_id, skip_change_comparator), \
 	}
 
 #define ANALOG_AXIS_CHANNEL_CAL_DEF(node_id) \

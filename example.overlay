@@ -65,8 +65,8 @@
             zephyr,gain = "ADC_GAIN_128";
             zephyr,reference = "ADC_REF_EXTERNAL1";
             zephyr,acquisition-time = <175>; // 175 SPS > 125 Hz
-            zephyr,input-positive = <2>;
-            zephyr,input-negative = <3>;
+            zephyr,input-positive = <1>; // AIN1
+            zephyr,input-negative = <2>; // AIN2
         };
 
         /*
@@ -78,8 +78,8 @@
             zephyr,gain = "ADC_GAIN_128";
             zephyr,reference = "ADC_REF_EXTERNAL1";
             zephyr,acquisition-time = <300>; // 300 SPS > 125 Hz
-            zephyr,input-positive = <2>;
-            zephyr,input-negative = <3>;
+            zephyr,input-positive = <1>; // AIN1
+            zephyr,input-negative = <2>; // AIN2
         };
 
     };

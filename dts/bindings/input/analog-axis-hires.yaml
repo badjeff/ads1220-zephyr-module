@@ -45,6 +45,13 @@ child-binding:
       description: |
         ADC IO channel to use.
 
+    avdd-gpios:
+      type: phandle-array
+      required: false
+      description: |
+        GPIO for analog power supply, active while ADC channel sampling.
+        Used for multiplexing voltage reference for different channels.
+
     out-min:
       type: int
       default: 0
@@ -78,12 +85,19 @@ child-binding:
       description: |
         Input value that corresponds to the maximum output value.
 
+    zephyr,axis-type:
+      type: int
+      required: true
+      description: |
+        The input type for the axis to report for the device, typically any of
+        INPUT_EV_*.
+
     zephyr,axis:
       type: int
       required: true
       description: |
         The input code for the axis to report for the device, typically any of
-        INPUT_ABS_*.
+        INPUT_ABS_* or INPUT_REL_*.
 
     invert-input:
       type: boolean
@@ -95,3 +109,8 @@ child-binding:
       type: boolean
       description: |
         If set, invert the output value.
+
+    skip-change-comparator:
+      type: boolean
+      description: |
+        If set, report every sampled values without comparator.

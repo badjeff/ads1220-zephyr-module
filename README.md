@@ -111,8 +111,8 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
             zephyr,gain = "ADC_GAIN_128";
             zephyr,reference = "ADC_REF_EXTERNAL1";
             zephyr,acquisition-time = <175>; // 175 SPS > 125 Hz
-            zephyr,input-positive = <2>;
-            zephyr,input-negative = <3>;
+            zephyr,input-positive = <1>; // AIN1
+            zephyr,input-negative = <2>; // AIN2
         };
 
         /*
@@ -124,8 +124,8 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
             zephyr,gain = "ADC_GAIN_128";
             zephyr,reference = "ADC_REF_EXTERNAL1";
             zephyr,acquisition-time = <300>; // 300 SPS > 125 Hz
-            zephyr,input-positive = <2>;
-            zephyr,input-negative = <3>;
+            zephyr,input-positive = <1>; // AIN1
+            zephyr,input-negative = <2>; // AIN2
         };
 
     };
@@ -237,8 +237,8 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | `zephyr,gain` | string | PGA gain (ADC_GAIN_1/2/4/8/16/32/64/128) |
 | `zephyr,reference` | string | Reference (ADC_REF_INTERNAL/EXTERNAL0/EXTERNAL1/VDD_1) |
 | `zephyr,acquisition-time` | int | Data rate (ADC_ACQ_TIME_DEFAULT/1000/600/330/175/90/45/20/ADC_ACQ_TIME_MAX) |
-| `zephyr,input-positive` | int | Positive input channel (1-4) |
-| `zephyr,input-negative` | int | Negative input channel (1-4) |
+| `zephyr,input-positive` | int | Positive input channel (0..3: AIN0..3 / 4:AVSS / 5:REFP / 6:AVDD / 7:SHORT) |
+| `zephyr,input-negative` | int | Negative input channel (0..3: AIN0..3 / 4:AVSS / 5:REFP / 6:AVDD / 7:SHORT) |
 
 ### Analog Axis Hi-Res Node (`analog-axis-hires`)
 | Property | Type | Description |
@@ -249,14 +249,17 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | Property | Type | Description |
 |----------|------|-------------|
 | `io-channels` | phandle-array | ADC channel reference |
+| `avdd-gpios` | phandle-array | Analog power supply gpio |
 | `in-min` | int | Input min value (required) |
 | `in-max` | int | Input max value (required) |
 | `out-min` | int | Output min value |
 | `out-max` | int | Output max value |
 | `in-deadzone` | int | Input deadzone |
-| `zephyr,axis` | int | Input event code (INPUT_ABS_*) |
+| `zephyr,axis-type` | int | Input event type (INPUT_EV_*) |
+| `zephyr,axis` | int | Input event code (INPUT_ABS_*, INPUT_REL_*) |
 | `invert-input` | boolean | Invert raw ADC value |
 | `invert-output` | boolean | Invert output value |
+| `skip-change-comparator` | boolean | report every polled sample |
 
 ## Usage Notes
 
