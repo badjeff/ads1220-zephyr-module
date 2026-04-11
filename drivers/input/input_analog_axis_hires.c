@@ -273,7 +273,7 @@ static void analog_axis_hires_loop(const struct device *dev)
 
 		if (axis_cfg->skip_change_comparator) {
 			input_report(dev, axis_cfg->axis_type, axis_cfg->axis, out, true, K_FOREVER);
-			LOG_DBG("%s: ch %d: out: %d raw: %d (raw)", dev->name, i, out, raw_val);
+			LOG_DBG("%s: ch %d: out: %d raw: %d", dev->name, i, out, raw_val);
 		}
 		else {
 			// LOG_DBG("%s: ch %d: out: %d %d", dev->name, i, out, axis_data->last_out);
