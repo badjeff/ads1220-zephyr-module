@@ -114,20 +114,6 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
             zephyr,input-positive = <1>; // AIN1
             zephyr,input-negative = <2>; // AIN2
         };
-
-        /*
-        Setup another channel wiring same pins with faster data rate at 300 SPS
-        */
-        adc_ads1220_ch1: channel@1 {
-            reg = <1>;
-            zephyr,resolution = <24>;
-            zephyr,gain = "ADC_GAIN_128";
-            zephyr,reference = "ADC_REF_EXTERNAL1";
-            zephyr,acquisition-time = <300>; // 300 SPS > 125 Hz
-            zephyr,input-positive = <1>; // AIN1
-            zephyr,input-negative = <2>; // AIN2
-        };
-
     };
 };
 
@@ -151,32 +137,18 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
 
             /* netural raw value from Wheatstone bridges via ADS1220 */
             /* NOTE: depends on zephyr,gain in adc_ads1220_ch0 */
-            in-min = <273100>;
-            in-max = <1730000>;
+            in-min = <329030>;
+            in-max = <1930010>;
             in-deadzone = <5>;
 
             /* clamp max output to 16 bit */
             out-min = <0>;
             out-max = <65535>;
+            // skip-change-comparator; /* uncomment this to debug */
 
+            zephyr,axis-type = <INPUT_EV_ABS>;
             zephyr,axis = <INPUT_ABS_Y>;
         };
-
-        /* Setup another axis to read from 2nd faster channel */
-        axis-y-from-300-sps {
-            io-channels = <&adc_ads1220 1>; // <--- different here
-
-            in-min = <273100>;
-            in-max = <1730000>;
-            in-deadzone = <5>;
-
-            /* clamp max output to 12 bit */
-            out-min = <0>;
-            out-max = <4095>; // <--- different here too
-
-            zephyr,axis = <INPUT_ABS_Y>;
-        };
-
     };
 };
 ```
