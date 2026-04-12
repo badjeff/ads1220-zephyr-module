@@ -40,41 +40,34 @@
         #io-channel-cells = <1>;
         #address-cells = <1>;
         #size-cells = <0>;
-
-        /*
-        Enable to wait for DRDY irq (Optional)
-        If disabled, fallback to estimated sampling time base on data rate
-        */
         // drdy-gpios = <&gpio1 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-        
-        /* enable closing low side power switch during a measurement */
         // low-side-power-switch;
 
         /* IDAC excitation current in microamperes (0/10/50/100/250/500/1000/2000) */
-        // idac-ua = <500>;
+        idac-ua = <500>;
 
         /*
-        Setup for Wheatstone bridges
-        ref: https://wolles-elektronikkiste.de/en/ads1220-part-2-applications
-        REFP1: Load cell Wire RED & AVCC
-        AIN1:  Load cell Wire Green
-        AIN2:  Load cell Wire White
-        REFN1: Load cell Wire Black & GND
+        Setup for dual half wheatstone bridges on trackpoint sensor board
         */
         adc_ads1220_ch0: channel@0 {
             reg = <0>;
             zephyr,resolution = <24>;
-            zephyr,gain = "ADC_GAIN_128";
-            zephyr,reference = "ADC_REF_EXTERNAL1";
+            zephyr,gain = "ADC_GAIN_64";
+            zephyr,reference = "ADC_REF_EXTERNAL0"; // REFP0/REFN0
+            zephyr,acquisition-time = <175>; // 175 SPS > 125 Hz
+            zephyr,input-positive = <0>; // AIN0
+            zephyr,input-negative = <2>; // AIN2
+            zephyr,current-source-pin = [05 00]; // IDAC1 to REFP0 (05), IDAC2 disabled (00)
+        };
+        adc_ads1220_ch1: channel@1 {
+            reg = <1>;
+            zephyr,resolution = <24>;
+            zephyr,gain = "ADC_GAIN_64";
+            zephyr,reference = "ADC_REF_EXTERNAL0"; // REFP0/REFN0
             zephyr,acquisition-time = <175>; // 175 SPS > 125 Hz
             zephyr,input-positive = <1>; // AIN1
             zephyr,input-negative = <2>; // AIN2
-            /*
-            IDAC1/IDAC2 output pin configuration per channel.
-            Requires CONFIG_ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN.
-            Example: IDAC1 to AIN0 (01), IDAC2 disabled (00)
-            */
-            // zephyr,current-source-pin = [01 00];
+            zephyr,current-source-pin = [05 00]; // IDAC1 to REFP0 (05), IDAC2 disabled (00)
         };
     };
 };
@@ -90,26 +83,30 @@
     anin0: analog_axis_hires_0 {
         compatible = "analog-axis-hires";
         status = "okay";
-
-        /* Set polling for bluetooth (max rate: 7.5ms) */
-        poll-period-ms = <8>; // 8ms = ~125 Hz < 175 SPS
-
-        axis-y {
+        poll-period-ms = <8>;
+        axis-x {
             io-channels = <&adc_ads1220 0>;
-
-            /* netural raw value from Wheatstone bridges via ADS1220 */
-            /* NOTE: depends on zephyr,gain in adc_ads1220_ch0 */
-            in-min = <329030>;
-            in-max = <1930010>;
-            in-deadzone = <5>;
-
-            /* clamp output */
-            out-min = <( -1024 )>;
-            out-max = <( 65535 )>;
-            // skip-change-comparator; /* uncomment this to debug */
-
-            zephyr,axis-type = <INPUT_EV_ABS>;
-            zephyr,axis = <INPUT_ABS_Y>;
+            /* netural raw value from ADS1220 */
+            in-min = <( 131622 - 655300 )>;
+            in-max = <( 131622 + 655300 )>;
+            in-deadzone = <1250>;
+            out-min = <( -127 )>;
+            out-max = <(  127 )>;
+            skip-change-comparator;
+            zephyr,axis-type = <INPUT_EV_REL>;
+            zephyr,axis = <INPUT_REL_X>;
+        };
+        axis-y {
+            io-channels = <&adc_ads1220 1>;
+            /* netural raw value from ADS1220 */
+            in-min = <( -21 - 655300 )>;
+            in-max = <( -21 + 655300 )>;
+            in-deadzone = <1250>;
+            out-min = <( -127 )>;
+            out-max = <(  127 )>;
+            skip-change-comparator;
+            zephyr,axis-type = <INPUT_EV_REL>;
+            zephyr,axis = <INPUT_REL_Y>;
         };
     };
 };

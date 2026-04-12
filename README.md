@@ -86,6 +86,8 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
         spi-max-frequency = <1000000>;
         reg = <0>;
         #io-channel-cells = <1>;
+        #address-cells = <1>;
+        #size-cells = <0>;
 
         /*
         Enable to wait for DRDY irq (Optional)
@@ -98,9 +100,6 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
 
         /* IDAC excitation current in microamperes (0/10/50/100/250/500/1000/2000) */
         // idac-ua = <500>;
-
-        #address-cells = <1>;
-        #size-cells = <0>;
 
         /*
         Setup for Wheatstone bridges
@@ -152,9 +151,9 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
             in-max = <1930010>;
             in-deadzone = <5>;
 
-            /* clamp max output to 16 bit */
-            out-min = <0>;
-            out-max = <65535>;
+            /* clamp output */
+            out-min = <( -1024 )>;
+            out-max = <( 65535 )>;
             // skip-change-comparator; /* uncomment this to debug */
 
             zephyr,axis-type = <INPUT_EV_ABS>;
