@@ -47,7 +47,31 @@
         idac-ua = <500>;
 
         /*
-        Setup for dual half wheatstone bridges on trackpoint sensor board
+        Setup for dual half wheatstone bridges on T440 trackpoint sensor board
+        
+        Pinout of 4-wire trackpoint sensor board:
+        (bottom view, pins on bottom, left to right): [x] [y] [a] [b]
+        (NOTES: there are 2 version for T440. 4-wire & 5-wire.)
+        +-----------------------------+
+        |             (y)             |
+        |             G1              |
+        |             (a)             |
+        | (x) G4 (a)   +   (b) G2 (x) |
+        |             (b)             |
+        |             G3              |
+        |             (y)             |
+        |                             |
+        |    [x]   [y]    [a]   [b]   |
+        +-----------------------------+
+
+        Wiring:
+        [x] <--> [AIN0]
+        [y] <--> [AIN1]
+        [a] <--> [REFP0] (500uA sources, via `idac-ua;` & `zephyr,current-source-pin;`)
+        [b] <--> [REFN0] & [AVSS]
+        [AIN2] <--( 2400ohm resistor)--> [REFP0]
+        [AIN2] <--( 2400ohm resistor)--> [REFN0]
+
         */
         adc_ads1220_ch0: channel@0 {
             reg = <0>;
