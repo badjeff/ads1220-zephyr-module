@@ -47,10 +47,10 @@ child-binding:
 
     avdd-gpios:
       type: phandle-array
-      required: false
       description: |
-        GPIO for analog power supply, active while ADC channel sampling.
-        Used for multiplexing voltage reference for different channels.
+        GPIO pin controlling the analog power supply.
+        Pin is driven high while sampling this ADC channel.
+        Use for multiplexing voltage reference across multiple channels.
 
     out-min:
       type: int
@@ -113,4 +113,20 @@ child-binding:
     skip-change-comparator:
       type: boolean
       description: |
-        If set, report every sampled values without comparator.
+        Skip the change comparator and report all sampled values.
+        By default, only reports values that differ from the previous reading.
+
+    in-calib-cycle:
+      type: int
+      description: |
+        Number of samples to collect for auto-calibration.
+        When set, captures the floating neutral values over this many samples.
+        The DT-specified in-min and in-max define the full range; calibrated
+        min/max will be shifted to align with the average of the neutral values.
+
+    in-deadzone-calib-scale-pctg:
+      type: int
+      description: |
+        Percentage of calibration range to use as deadzone.
+        Scales the measured min-max range from calibration to set the deadzone.
+        Use to filter noise/extreme samples during calibration.

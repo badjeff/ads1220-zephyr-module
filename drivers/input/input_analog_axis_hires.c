@@ -36,10 +36,13 @@ struct analog_axis_hires_channel_config {
 	bool invert_input;
 	bool invert_output;
 	bool skip_change_comparator;
+	uint16_t calib_cycle;
+	uint8_t deadzone_calib_scale_pctg;
 };
 
 struct analog_axis_hires_channel_data {
 	int32_t last_out;
+	struct analog_axis_hires_calib_state calib_state;
 };
 
 struct analog_axis_hires_config {
@@ -257,6 +260,73 @@ static void analog_axis_hires_loop(const struct device *dev)
 
 		// LOG_DBG("%s: ch %d: raw_val: %d", dev->name, i, raw_val);
 
+		if (axis_cfg->calib_cycle > 0) {
+			struct analog_axis_hires_calib_state *calib_state = &axis_data->calib_state;
+
+			if (!calib_state->calibrated) {
+				if (calib_state->history == NULL && axis_cfg->calib_cycle > 0) {
+					calib_state->history = malloc(axis_cfg->calib_cycle * sizeof(int32_t));
+					if (calib_state->history) {
+						memset(calib_state->history, 0, axis_cfg->calib_cycle * sizeof(int32_t));
+						calib_state->history_filled = 0;
+						calib_state->history_idx = 0;
+					} else {
+						LOG_ERR("Failed to allocate calib history for ch %d", i);
+					}
+				}
+
+				if (calib_state->history) {
+					calib_state->history[calib_state->history_idx] = raw_val;
+					calib_state->history_idx = (calib_state->history_idx + 1) % axis_cfg->calib_cycle;
+					calib_state->history_filled = MIN(calib_state->history_filled + 1, axis_cfg->calib_cycle);
+
+					calib_state->min = MIN(calib_state->min, raw_val);
+					calib_state->max = MAX(calib_state->max, raw_val);
+
+					calib_state->calib_cnt++;
+
+					LOG_DBG("ch %d calib: %d/%d val:%d min:%d max:%d", i,
+						calib_state->calib_cnt, axis_cfg->calib_cycle,
+						raw_val, calib_state->min, calib_state->max);
+
+					if (calib_state->calib_cnt >= axis_cfg->calib_cycle) {
+						int64_t weighted_sum = 0;
+						for (uint8_t j = 0; j < calib_state->history_filled; j++) {
+							weighted_sum += (int64_t)calib_state->history[j] * (j + 1);
+						}
+						int64_t avg = weighted_sum /
+							      ((int64_t)calib_state->history_filled *
+							       (calib_state->history_filled + 1) / 2);
+						int32_t dt_range = cal->in_max - cal->in_min;
+						int32_t dt_half_range = dt_range / 2;
+
+						cal->in_min = (int32_t)(avg - dt_half_range);
+						cal->in_max = (int32_t)(avg + dt_half_range);
+
+						if (axis_cfg->deadzone_calib_scale_pctg > 0) {
+							int32_t calib_range = calib_state->max - calib_state->min;
+							uint32_t deadzone = (calib_range * axis_cfg->deadzone_calib_scale_pctg) / 100;
+							cal->in_deadzone = deadzone;
+						}
+
+						calib_state->calibrated = true;
+
+						LOG_INF("ch %d calibrated: avg:%lld dt_range:%d deadzone:%d min:%d max:%d",
+							i, avg, dt_range, cal->in_deadzone, cal->in_min, cal->in_max);
+
+						free(calib_state->history);
+						calib_state->history = NULL;
+					}
+				}
+				continue;
+			}
+		}
+
+		// /* keep for debugging */
+		// struct analog_axis_hires_calib_state *calib_state = &axis_data->calib_state;
+		// LOG_INF("ch %d deadzone:%d min:%d max:%d calibrateed:%d",
+		// 	i, cal->in_deadzone, cal->in_min, cal->in_max, calib_state->calib_cnt);
+
 		if (cal->in_deadzone > 0) {
 			out = analog_axis_hires_out_deadzone(dev, i, raw_val);
 		} else {
@@ -381,12 +451,27 @@ static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 static int analog_axis_hires_init(const struct device *dev)
 {
 	struct analog_axis_hires_data *data = dev->data;
+	const struct analog_axis_hires_config *cfg = dev->config;
 	k_tid_t tid;
+	int i;
 
 	LOG_INF("analog_axis_hires_init: START");
 
 	k_sem_init(&data->cal_lock, 1, 1);
 	k_timer_init(&data->timer, NULL, NULL);
+
+	for (i = 0; i < cfg->num_channels; i++) {
+		struct analog_axis_hires_channel_data *axis_data = &cfg->channel_data[i];
+		struct analog_axis_hires_calib_state *calib_state = &axis_data->calib_state;
+
+		calib_state->calibrated = false;
+		calib_state->calib_cnt = 0;
+		calib_state->min = INT32_MAX;
+		calib_state->max = INT32_MIN;
+		calib_state->history = NULL;
+		calib_state->history_idx = 0;
+		calib_state->history_filled = 0;
+	}
 
 #ifdef CONFIG_PM_DEVICE
 	k_sem_init(&data->wakeup, 0, 1);
@@ -406,8 +491,6 @@ static int analog_axis_hires_init(const struct device *dev)
 	k_thread_name_set(&data->thread, dev->name);
 
 #ifndef CONFIG_PM_DEVICE_RUNTIME
-	const struct analog_axis_hires_config *cfg = dev->config;
-
 	LOG_INF("Starting timer with period %d ms", cfg->poll_period_ms);
 	k_timer_start(&data->timer,
 		      K_MSEC(cfg->poll_period_ms), K_MSEC(cfg->poll_period_ms));
@@ -468,6 +551,8 @@ static int analog_axis_hires_pm_action(const struct device *dev,
 		.invert_input = DT_PROP(node_id, invert_input), \
 		.invert_output = DT_PROP(node_id, invert_output), \
 		.skip_change_comparator = DT_PROP(node_id, skip_change_comparator), \
+		.calib_cycle = DT_PROP_OR(node_id, in_calib_cycle, 0), \
+		.deadzone_calib_scale_pctg = DT_PROP_OR(node_id, in_deadzone_calib_scale_pctg, 0), \
 	}
 
 #define ANALOG_AXIS_CHANNEL_CAL_DEF(node_id) \

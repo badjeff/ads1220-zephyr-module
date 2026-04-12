@@ -4,7 +4,7 @@ This module provides two drivers for high-resolution analog input:
 
 1. **ADS1220 ADC Driver** - Texas Instruments 24-bit SPI ADC with 4 differential input channels, configurable gain (1-128x), multiple data rates (20-1000 SPS), and optional DRDY interrupt support.
 
-2. **Analog Axis Hi-Res Input Driver** - Fork of Zephyr's `analog-axis` driver with 24-bit buffering, and multi-configuration per device. Provides all other inherited features from original driver.
+2. **Analog Axis Hi-Res Input Driver** - Fork of Zephyr's `analog-axis` driver with 24-bit buffering, per-channel auto-calibration, and multi-configuration per device. Provides all other inherited features from original driver.
 
 ## Features
 
@@ -23,6 +23,7 @@ This module provides two drivers for high-resolution analog input:
 - High-resolution ADC support (16-bit+)
 - int32_t buffer for 24-bit ADC values
 - Multi-configuration per device
+- Per-channel auto-calibration support
 - Other inherited features from original driver
 
 ## Installation
@@ -243,7 +244,9 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | `zephyr,axis` | int | Input event code (INPUT_ABS_*, INPUT_REL_*) |
 | `invert-input` | boolean | Invert raw ADC value |
 | `invert-output` | boolean | Invert output value |
-| `skip-change-comparator` | boolean | report every polled sample |
+| `skip-change-comparator` | boolean | Report every polled sample |
+| `in-calib-cycle` | int | Number of samples for auto-calibration (optional) |
+| `in-deadzone-calib-scale-pctg` | int | Percentage of calibration range to use as deadzone (optional, 0 = keep DT value) |
 
 ## Usage Notes
 

@@ -35,6 +35,28 @@ struct analog_axis_hires_calibration {
 };
 
 /**
+ * @brief Analog axis hi-res calibration state.
+ *
+ * Holds the runtime calibration state for auto-calibration.
+ */
+struct analog_axis_hires_calib_state {
+	/** Whether auto-calibration has completed. */
+	bool calibrated;
+	/** Counter for calibration cycles. */
+	uint32_t calib_cnt;
+	/** Minimum value seen during calibration. */
+	int32_t min;
+	/** Maximum value seen during calibration. */
+	int32_t max;
+	/** History buffer for weighted average. */
+	int32_t *history;
+	/** Current index in history buffer. */
+	uint8_t history_idx;
+	/** Number of filled history slots. */
+	uint8_t history_filled;
+};
+
+/**
  * @brief Analog axis hi-res raw data callback.
  *
  * @param dev Analog axis hi-res device.
