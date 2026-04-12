@@ -29,6 +29,7 @@ LOG_MODULE_REGISTER(ads1220, CONFIG_ADC_LOG_LEVEL);
 #define ADS1220_CONFIG0_REG		0x00   /* Configuration register 0 */
 #define ADS1220_CONFIG1_REG		0x01   /* Configuration register 1 */
 #define ADS1220_CONFIG2_REG		0x02   /* Configuration register 2 */
+#define ADS1220_CONFIG3_REG		0x03   /* Configuration register 3 */
 
 #define ADS1220_RESET_CMD				0x06   /* Reset command */
 #define ADS1220_START_CMD				0x08   /* Start/conversion command */
@@ -37,15 +38,27 @@ LOG_MODULE_REGISTER(ads1220, CONFIG_ADC_LOG_LEVEL);
 #define ADS1220_RREG_CMD				0x20   /* Read register command */
 #define ADS1220_WREG_CMD				0x40   /* Write register command */
 
-#define ADS1220_MUX_MASK		GENMASK(7, 4)  /* CONFIG0: MUX selection bits */
-#define ADS1220_GAIN_MASK		GENMASK(3, 1)  /* CONFIG0: PGA gain selection bits */
-#define ADS1220_DR_MASK			GENMASK(7, 5)  /* CONFIG1: Data rate selection bits */
-#define ADS1220_MODE_MASK		GENMASK(2, 2)  /* CONFIG1: Conversion mode: 0=continuous, 1=single-shot */
+#define ADS1220_MUX_MASK						GENMASK(7, 4)  /* CONFIG0: MUX selection bits */
+#define ADS1220_GAIN_MASK						GENMASK(3, 1)  /* CONFIG0: PGA gain selection bits */
+#define ADS1220_DR_MASK							GENMASK(7, 5)  /* CONFIG1: Data rate selection bits */
+#define ADS1220_MODE_MASK						GENMASK(2, 2)  /* CONFIG1: Conversion mode: 0=continuous, 1=single-shot */
+#define ADS1220_IDAC_CURRENT_MASK		GENMASK(2, 0)  /* CONFIG2: IDAC current selection bits */
+#define ADS1220_I1MUX_MASK					GENMASK(7, 5)  /* CONFIG3: IDAC1 mux selection bits */
+#define ADS1220_I2MUX_MASK					GENMASK(4, 2)  /* CONFIG3: IDAC2 mux selection bits */
 
 #define ADS1220_VREF_INTERNAL				0      /* Internal 2.048V reference */
 #define ADS1220_VREF_EXTERNAL_REFP0	1      /* External reference REFP0/REFN0 */
 #define ADS1220_VREF_EXTERNAL_REFP1	2      /* External reference REFP1/REFN1 (AIN0/AIN3) */
 #define ADS1220_VREF_AVDD						3      /* AVDD as reference */
+
+#define ADS1220_IDAC_UA_0			0       /* 000: IDAC disabled */
+#define ADS1220_IDAC_UA_10		1       /* 001: IDAC = 10 uA */
+#define ADS1220_IDAC_UA_50		2       /* 010: IDAC = 50 uA */
+#define ADS1220_IDAC_UA_100		3       /* 011: IDAC = 100 uA */
+#define ADS1220_IDAC_UA_250		4       /* 100: IDAC = 250 uA */
+#define ADS1220_IDAC_UA_500		5       /* 101: IDAC = 500 uA */
+#define ADS1220_IDAC_UA_1000	6       /* 110: IDAC = 1000 uA */
+#define ADS1220_IDAC_UA_2000	7       /* 111: IDAC = 2000 uA */
 
 #define ADS1220_RESET_DELAY	1      /* Reset delay in ms */
 
@@ -107,10 +120,21 @@ enum ads1220_data_rate {
 	ADS1220_DR_1000 = 0xC0,  /* 110: 1000 SPS */
 };
 
+enum ads1220_idac_conn {
+	ADS1220_IDAC_DISABLED = 0x00,   /* 000: IDAC disabled */
+	ADS1220_IDAC_AIN0_REFP1 = 0x01, /* 001: IDAC1|2 connected to AIN0/REFP1 */
+	ADS1220_IDAC_AIN1 = 0x02,     	/* 010: IDAC1|2 connected to AIN1 */
+	ADS1220_IDAC_AIN2 = 0x03,     	/* 011: IDAC1|2 connected to AIN2 */
+	ADS1220_IDAC_AIN3_REFP1 = 0x04, /* 100: IDAC1|2 connected to AIN3/REFN1 */
+	ADS1220_IDAC_REFP0 = 0x05,     	/* 101: IDAC1|2 connected to REFP0 */
+	ADS1220_IDAC_REFN0 = 0x06,     	/* 110: IDAC1|2 connected to REFP0 */
+};
+
 struct ads1220_config {
 	const struct spi_dt_spec spi;
 	const struct gpio_dt_spec gpio_drdy;
 	bool low_side_power_switch;
+	uint16_t idac_ua;
 };
 
 struct ads1220_data {
@@ -125,6 +149,7 @@ struct ads1220_data {
 	uint8_t last_config0;
 	uint8_t last_config1;
 	uint8_t last_config2;
+	uint8_t last_config3;
 };
 
 static inline int ads1220_transceive(const struct device *dev,
@@ -192,6 +217,7 @@ static int ads1220_setup(const struct device *dev,
 	uint8_t config0;
 	uint8_t config1;
 	uint8_t config2;
+	uint8_t config3;
 	uint8_t gain;
 	uint8_t mux_value;
 	uint8_t data_rate = ADS1220_DR_1000;
@@ -199,14 +225,18 @@ static int ads1220_setup(const struct device *dev,
 	uint32_t ready_time_us = 1000;
 	uint8_t vref_value = ADS1220_VREF_INTERNAL;
 	uint8_t psw_value = 0;
+	uint8_t i1mux_value = 0;
+	uint8_t i2mux_value = 0;
+	uint8_t idac_current = 0;
 	const struct ads1220_config *cfg = dev->config;
 	struct ads1220_data *data = dev->data;
 
 	config0 = data->last_config0;
 	config1 = data->last_config1;
 	config2 = data->last_config2;
-	// LOG_DBG("setup: last active CONFIG0/1/2=0x%02X / 0x%02X / 0x%02X", 
-	// 	config0, config1, config2);
+	config3 = data->last_config3;
+	// LOG_DBG("setup: last active CONFIG0/1/2=0x%02X / 0x%02X / 0x%02X / 0x%02X", 
+	// 	config0, config1, config2, config3);
 
 	gain = channel_cfg->gain;
 
@@ -381,12 +411,60 @@ static int ads1220_setup(const struct device *dev,
 		psw_value = BIT(3);
 	}
 
+	switch (cfg->idac_ua) {
+	case 0:
+		idac_current = ADS1220_IDAC_UA_0;
+		break;
+	case 10:
+		idac_current = ADS1220_IDAC_UA_10;
+		break;
+	case 50:
+		idac_current = ADS1220_IDAC_UA_50;
+		break;
+	case 100:
+		idac_current = ADS1220_IDAC_UA_100;
+		break;
+	case 250:
+		idac_current = ADS1220_IDAC_UA_250;
+		break;
+	case 500:
+		idac_current = ADS1220_IDAC_UA_500;
+		break;
+	case 1000:
+		idac_current = ADS1220_IDAC_UA_1000;
+		break;
+	case 2000:
+		idac_current = ADS1220_IDAC_UA_2000;
+		break;
+	default:
+		LOG_WRN("Invalid idac-ua: %d, default to disabled", cfg->idac_ua);
+		idac_current = ADS1220_IDAC_UA_0;
+		break;
+	}
+
 	config2 = (config2 & ~0x30) | (vref_value << 4);
 	config2 = (config2 & ~0x08) | psw_value;
-	// LOG_DBG("CONFIG2: VREF=0x%02X, PSW=%d",
-	// 	(config2 >> 4) & 0x03, (config2 >> 3) & 0x01);
+	config2 = (config2 & ~ADS1220_IDAC_CURRENT_MASK) |
+		  FIELD_PREP(ADS1220_IDAC_CURRENT_MASK, idac_current);
+	// LOG_DBG("CONFIG2: VREF=0x%02X, PSW=%d, IDAC=%u",
+	// 	(config2 >> 4) & 0x03, (config2 >> 3) & 0x01,
+	// 	(unsigned int)(config2 & ADS1220_IDAC_CURRENT_MASK));
 
-	uint8_t read_config0, read_config1, read_config2;
+#if defined(CONFIG_ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN)
+	if (channel_cfg->current_source_pin_set) {
+		i1mux_value = channel_cfg->current_source_pin[0] & 0x07;
+		i2mux_value = channel_cfg->current_source_pin[1] & 0x07;
+	}
+#endif
+
+	config3 = (config3 & ~(ADS1220_I1MUX_MASK | ADS1220_I2MUX_MASK)) |
+		  FIELD_PREP(ADS1220_I1MUX_MASK, i1mux_value) |
+		  FIELD_PREP(ADS1220_I2MUX_MASK, i2mux_value);
+	// LOG_DBG("CONFIG3: I1MUX=0x%02X, I2MUX=0x%02X",
+	// 	(unsigned int)(config3 & ADS1220_I1MUX_MASK),
+	// 	(unsigned int)(config3 & ADS1220_I2MUX_MASK));
+
+	uint8_t read_config0, read_config1, read_config2, read_config3;
 
 	if (config0 != data->last_config0) {
 		ret = ads1220_reg_write(dev, ADS1220_CONFIG0_REG, config0);
@@ -430,6 +508,21 @@ static int ads1220_setup(const struct device *dev,
 		} else {
 			// LOG_DBG("wrote CONFIG2=0x%02X", read_config2);
 			data->last_config2 = config2;
+		}
+	}
+
+	if (config3 != data->last_config3) {
+		ret = ads1220_reg_write(dev, ADS1220_CONFIG3_REG, config3);
+		if (ret < 0) {
+			return ret;
+		}
+		ads1220_reg_read(dev, ADS1220_CONFIG3_REG, &read_config3, 1);
+		if (read_config3 != config3) {
+			LOG_ERR("config3 mismatch! 0x%02X != 0x%02X", config3, read_config3);
+			return -EIO;
+		} else {
+			// LOG_DBG("wrote CONFIG3=0x%02X", read_config3);
+			data->last_config3 = config3;
 		}
 	}
 
@@ -731,6 +824,7 @@ static int ads1220_init(const struct device *dev)
 	data->last_config0 = 0x00;
 	data->last_config1 = 0x00;
 	data->last_config2 = 0x00;
+	data->last_config3 = 0x00;
 
 	ret = ads1220_configure_gpio(dev);
 	if (ret != 0) {
@@ -759,6 +853,7 @@ static int ads1220_init(const struct device *dev)
 		.spi = SPI_DT_SPEC_INST_GET(n, ADC_ADS1220_SPI_MODE, 0),	\
 		.gpio_drdy = GPIO_DT_SPEC_INST_GET_OR(n, drdy_gpios, {0}),	\
 		.low_side_power_switch = DT_INST_PROP(n, low_side_power_switch),	\
+		.idac_ua = DT_INST_PROP_OR(n, idac_ua, 0),			\
 	};									\
 	static struct ads1220_data data_##n;					\
 	DEVICE_DT_INST_DEFINE(n, ads1220_init,				\

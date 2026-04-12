@@ -6,6 +6,7 @@ config ADC_ADS1220
 	default y
 	depends on DT_HAS_TI_ADS1220_ENABLED
 	select ADC_CONFIGURABLE_INPUTS
+	select ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN
 	select SPI
 	select GPIO
 	help

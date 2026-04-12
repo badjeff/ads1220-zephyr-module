@@ -16,6 +16,8 @@ This module provides two drivers for high-resolution analog input:
 - Internal or external reference support
 - Optional DRDY GPIO interrupt (fallback to timed polling)
 - Low-side power switch for RTD/load cell applications
+- Programmable IDAC excitation current (0/10/50/100/250/500/1000/2000 uA)
+- Configurable IDAC1/IDAC2 output pins per channel
 
 ### Analog Axis Hi-Res Input Driver
 - High-resolution ADC support (16-bit+)
@@ -92,7 +94,10 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
         // drdy-gpios = <&gpio1 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
         
         /* enable closing low side power switch during a measurement */
-        low-side-power-switch;
+        // low-side-power-switch;
+
+        /* IDAC excitation current in microamperes (0/10/50/100/250/500/1000/2000) */
+        // idac-ua = <500>;
 
         #address-cells = <1>;
         #size-cells = <0>;
@@ -100,10 +105,10 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
         /*
         Setup for Wheatstone bridges
         ref: https://wolles-elektronikkiste.de/en/ads1220-part-2-applications
-        REFP1: Load cell Wire RED & 3v3
+        REFP1: Load cell Wire RED & AVCC
         AIN1:  Load cell Wire Green
         AIN2:  Load cell Wire White
-        REFN1: Load cell Wire Black
+        REFN1: Load cell Wire Black & GND
         */
         adc_ads1220_ch0: channel@0 {
             reg = <0>;
@@ -113,6 +118,12 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
             zephyr,acquisition-time = <175>; // 175 SPS > 125 Hz
             zephyr,input-positive = <1>; // AIN1
             zephyr,input-negative = <2>; // AIN2
+            /*
+            IDAC1/IDAC2 output pin configuration per channel.
+            Requires CONFIG_ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN.
+            Example: IDAC1 to AIN0 (01), IDAC2 disabled (00)
+            */
+            // zephyr,current-source-pin = [01 00];
         };
     };
 };
@@ -201,6 +212,7 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | `spi-max-frequency` | int | SPI clock frequency |
 | `drdy-gpios` | phandle-array | Data ready GPIO (optional) |
 | `low-side-power-switch` | boolean | Enable low-side power switch |
+| `idac-ua` | int | IDAC current (0/10/50/100/250/500/1000/2000 uA), default 0 (disabled) |
 
 ### Channel Node
 | Property | Type | Description |
@@ -211,6 +223,7 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | `zephyr,acquisition-time` | int | Data rate (ADC_ACQ_TIME_DEFAULT/1000/600/330/175/90/45/20/ADC_ACQ_TIME_MAX) |
 | `zephyr,input-positive` | int | Positive input channel (0..3: AIN0..3 / 4:AVSS / 5:REFP / 6:AVDD / 7:SHORT) |
 | `zephyr,input-negative` | int | Negative input channel (0..3: AIN0..3 / 4:AVSS / 5:REFP / 6:AVDD / 7:SHORT) |
+| `zephyr,current-source-pin` | uint8-array | IDAC1/IDAC2 connection [IDAC1, IDAC2], requires `CONFIG_ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN` |
 
 ### Analog Axis Hi-Res Node (`analog-axis-hires`)
 | Property | Type | Description |
@@ -244,6 +257,15 @@ CONFIG_PM_DEVICE_RUNTIME=y
 4. **Multi-Configuration Per Device**: The input driver supports multiple different configuration per device. It automatically detects if all axes share the same ADC configuration (gain, reference, acquisition time, etc.). If they do, it uses a single ADC sequence for efficient reading. If configurations differ, it re-sets up device configuration for each axis individually before reading.
 
 5. **Power Consumption**: The poll mode driver continuously samples. For battery-powered devices, consider reducing `poll-period-ms` or implementing dynamic polling based on activity.
+
+6. **IDAC Current Sources**: The ADS1220 provides two programmable current sources (IDAC1/IDAC2) for exciting sensors like RTDs. Use `idac-ua` to set the current level (10-2000 uA) and `zephyr,current-source-pin` to configure which pins the IDACs are connected to:
+   - 0: Disabled
+   - 1: AIN0/REFP1
+   - 2: AIN1
+   - 3: AIN2
+   - 4: AIN3/REFN1
+   - 5: REFP0
+   - 6: REFN0
 
 ## License
 

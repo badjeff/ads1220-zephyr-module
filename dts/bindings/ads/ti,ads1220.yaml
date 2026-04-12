@@ -26,5 +26,15 @@ properties:
       between AIN3/REFN1 and AVSS is turned on during conversion to reduce
       input leakage current. This is useful for RTD applications.
 
+  idac-ua:
+    type: int
+    required: false
+    default: 0
+    description: |
+      IDAC current setting in microamperes. Configures the excitation current
+      sources IDAC1 and IDAC2. Default is 0 (disabled).
+      Valid values: 0, 10, 50, 100, 250, 500, 1000, 2000 (in microamperes).
+    enum: [0, 10, 50, 100, 250, 500, 1000, 2000]
+
 io-channel-cells:
   - input
