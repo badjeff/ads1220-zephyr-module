@@ -46,7 +46,10 @@ struct analog_axis_hires_channel_data {
 };
 
 struct analog_axis_hires_config {
-	uint32_t poll_period_ms;
+	const uint32_t poll_period_ms;
+	const uint32_t *poll_period_downshift_ms;
+	const uint8_t num_downshift_levels;
+	const bool has_poll_period_downshift_ms;
 	const struct analog_axis_hires_channel_config *channel_cfg;
 	struct analog_axis_hires_channel_data *channel_data;
 	struct analog_axis_hires_calibration *calibration;
@@ -58,7 +61,12 @@ struct analog_axis_hires_data {
 	analog_axis_hires_raw_data_t raw_data_cb;
 	struct k_timer timer;
 	struct k_thread thread;
+	struct k_work_delayable downshift_work;
+	const struct device *dev;
+	uint32_t poll_period_ms;
+	uint8_t idle_level;
 	bool use_same_adc_ch_cfg;
+	bool axis_active;
 
 	K_KERNEL_STACK_MEMBER(thread_stack,
 			      CONFIG_INPUT_ANALOG_AXIS_HIRES_THREAD_STACK_SIZE);
@@ -244,6 +252,9 @@ static void analog_axis_hires_loop(const struct device *dev)
 
 	k_sem_take(&data->cal_lock, K_FOREVER);
 
+	int32_t report_cache[cfg->num_channels * 2];
+	uint8_t report_count = 0;
+
 	for (i = 0; i < cfg->num_channels; i++) {
 		const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];
 		struct analog_axis_hires_channel_data *axis_data = &cfg->channel_data[i];
@@ -324,7 +335,7 @@ static void analog_axis_hires_loop(const struct device *dev)
 
 		// /* keep for debugging */
 		// struct analog_axis_hires_calib_state *calib_state = &axis_data->calib_state;
-		// LOG_INF("ch %d deadzone:%d min:%d max:%d calibrateed:%d",
+		// LOG_DBG("ch %d deadzone:%d min:%d max:%d calibrateed:%d",
 		// 	i, cal->in_deadzone, cal->in_min, cal->in_max, calib_state->calib_cnt);
 
 		if (cal->in_deadzone > 0) {
@@ -342,17 +353,34 @@ static void analog_axis_hires_loop(const struct device *dev)
 		}
 
 		if (axis_cfg->skip_change_comparator) {
-			input_report(dev, axis_cfg->axis_type, axis_cfg->axis, out, true, K_FOREVER);
-			LOG_DBG("%s: ch %d: out: %d raw: %d", dev->name, i, out, raw_val);
+			if (out != 0) {
+				report_cache[report_count * 2] = i;
+				report_cache[report_count * 2 + 1] = out;
+				report_count++;
+				LOG_DBG("%s: ch %d: out: %d raw: %d", dev->name, i, out, raw_val);
+			}
 		}
 		else {
 			// LOG_DBG("%s: ch %d: out: %d %d", dev->name, i, out, axis_data->last_out);
 			if (axis_data->last_out != out) {
-				input_report(dev, axis_cfg->axis_type, axis_cfg->axis, out, true, K_FOREVER);
+				report_cache[report_count * 2] = i;
+				report_cache[report_count * 2 + 1] = out;
+				report_count++;
 				LOG_DBG("%s: ch %d: out: %d (changed) raw: %d", dev->name, i, out, raw_val);
 			}
 		}
+		if (axis_data->last_out != out) {
+			data->axis_active = true;
+		}
 		axis_data->last_out = out;
+	}
+
+	for (i = 0; i < report_count; i++) {
+		uint8_t ch = report_cache[i * 2];
+		int32_t val = report_cache[i * 2 + 1];
+		const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[ch];
+		bool sync = (i == report_count - 1);
+		input_report(dev, axis_cfg->axis_type, axis_cfg->axis, val, sync, K_FOREVER);
 	}
 
 	k_sem_give(&data->cal_lock);
@@ -444,7 +472,84 @@ static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 #endif
 
 		analog_axis_hires_loop(dev);
+
+		if (cfg->has_poll_period_downshift_ms && data->poll_period_ms > 0) {
+			bool calibrating = false;
+			for (i = 0; i < cfg->num_channels; i++) {
+				struct analog_axis_hires_channel_data *axis_data = &cfg->channel_data[i];
+				if (!axis_data->calib_state.calibrated) {
+					calibrating = true;
+					break;
+				}
+			}
+
+			if (data->axis_active || calibrating) {
+				data->axis_active = false;
+				if (data->idle_level > 0) {
+					data->idle_level = 0;
+					data->poll_period_ms = cfg->poll_period_downshift_ms[0];
+					// LOG_DBG("Axis active or calibrating, reset to poll period %d ms", data->poll_period_ms);
+					LOG_INF("Upshift to level %d, period %d ms", data->idle_level, data->poll_period_ms);
+					k_timer_start(&data->timer, K_MSEC(data->poll_period_ms),
+						    K_MSEC(data->poll_period_ms));
+				}
+				k_work_cancel_delayable(&data->downshift_work);
+			} else if (data->idle_level < cfg->num_downshift_levels) {
+				uint8_t level = data->idle_level;
+				uint32_t downshift_time = cfg->poll_period_downshift_ms[level * 2 + 1];
+				// LOG_DBG("Schedule downshift: level=%d time=%dms", level, downshift_time);
+				k_work_schedule_for_queue(&k_sys_work_q, &data->downshift_work, K_MSEC(downshift_time));
+			}
+		}
+
 		k_timer_status_sync(&data->timer);
+	}
+}
+
+static void analog_axis_hires_downshift_work(struct k_work *work)
+{
+	struct analog_axis_hires_data *data = CONTAINER_OF(work, struct analog_axis_hires_data, downshift_work.work);
+	const struct analog_axis_hires_config *cfg = data->dev->config;
+
+	if (!cfg->has_poll_period_downshift_ms) {
+		return;
+	}
+
+#ifdef CONFIG_PM_DEVICE
+	if (atomic_get(&data->suspended) == 1) {
+		return;
+	}
+#endif
+
+	if (data->idle_level >= cfg->num_downshift_levels) {
+		LOG_DBG("Already at max level %d", data->idle_level);
+		return;
+	}
+
+	uint8_t next_level = data->idle_level + 1;
+
+	uint32_t new_period = data->poll_period_ms;
+	const uint32_t *downshift = cfg->poll_period_downshift_ms;
+	
+	// LOG_DBG("Downshift work: idle_level=%d next_level=%d num_levels=%d",
+	// 	data->idle_level, next_level, cfg->num_downshift_levels);
+	for (uint8_t i = 0; i < next_level && i < cfg->num_downshift_levels; i++) {
+		new_period = downshift[i * 2 + 2];
+		// LOG_DBG("  i=%d idx=%d period=%d", i, i*2+2, new_period);
+	}
+
+	data->poll_period_ms = new_period;
+	data->idle_level = next_level;
+
+	if (new_period < 1) {
+		LOG_INF("Downshift to level %d, stopping timer", next_level);
+#ifdef CONFIG_PM_DEVICE
+		atomic_set(&data->suspended, 1);
+#endif
+		k_timer_stop(&data->timer);
+	} else {
+		LOG_INF("Downshift to level %d, period %d ms", next_level, new_period);
+		k_timer_start(&data->timer, K_MSEC(new_period), K_MSEC(new_period));
 	}
 }
 
@@ -459,6 +564,13 @@ static int analog_axis_hires_init(const struct device *dev)
 
 	k_sem_init(&data->cal_lock, 1, 1);
 	k_timer_init(&data->timer, NULL, NULL);
+	k_work_init_delayable(&data->downshift_work, analog_axis_hires_downshift_work);
+	data->dev = dev;
+
+	data->poll_period_ms = cfg->has_poll_period_downshift_ms ?
+		cfg->poll_period_downshift_ms[0] : cfg->poll_period_ms;
+	data->idle_level = 0;
+	data->axis_active = false;
 
 	for (i = 0; i < cfg->num_channels; i++) {
 		struct analog_axis_hires_channel_data *axis_data = &cfg->channel_data[i];
@@ -491,9 +603,9 @@ static int analog_axis_hires_init(const struct device *dev)
 	k_thread_name_set(&data->thread, dev->name);
 
 #ifndef CONFIG_PM_DEVICE_RUNTIME
-	LOG_INF("Starting timer with period %d ms", cfg->poll_period_ms);
+	LOG_INF("Starting timer with period %d ms", data->poll_period_ms);
 	k_timer_start(&data->timer,
-		      K_MSEC(cfg->poll_period_ms), K_MSEC(cfg->poll_period_ms));
+		      K_MSEC(data->poll_period_ms), K_MSEC(data->poll_period_ms));
 #else
 	int ret;
 
@@ -523,11 +635,16 @@ static int analog_axis_hires_pm_action(const struct device *dev,
 	case PM_DEVICE_ACTION_SUSPEND:
 		atomic_set(&data->suspended, 1);
 		k_timer_stop(&data->timer);
+		k_work_cancel_delayable(&data->downshift_work);
 		break;
 	case PM_DEVICE_ACTION_RESUME:
+		data->poll_period_ms = cfg->has_poll_period_downshift_ms ?
+			cfg->poll_period_downshift_ms[0] : cfg->poll_period_ms;
+		data->idle_level = 0;
+		data->axis_active = false;
 		k_timer_start(&data->timer,
-			      K_MSEC(cfg->poll_period_ms),
-			      K_MSEC(cfg->poll_period_ms));
+			      K_MSEC(data->poll_period_ms),
+			      K_MSEC(data->poll_period_ms));
 		atomic_set(&data->suspended, 0);
 		k_sem_give(&data->wakeup);
 		break;
@@ -576,8 +693,15 @@ static int analog_axis_hires_pm_action(const struct device *dev,
 				inst, ANALOG_AXIS_CHANNEL_CAL_DEF, (,))				\
 		};										\
 												\
+	static const uint32_t analog_axis_hires_downshift_##inst[] =			\
+		DT_INST_PROP_OR(inst, poll_period_downshift_ms, {0});				\
+												\
 	static const struct analog_axis_hires_config analog_axis_hires_cfg_##inst = {			\
 		.poll_period_ms = DT_INST_PROP(inst, poll_period_ms),				\
+		.poll_period_downshift_ms = analog_axis_hires_downshift_##inst,			\
+		.num_downshift_levels = (ARRAY_SIZE(analog_axis_hires_downshift_##inst) > 1) ?		\
+			(ARRAY_SIZE(analog_axis_hires_downshift_##inst) - 1) / 2 : 0,			\
+		.has_poll_period_downshift_ms = (ARRAY_SIZE(analog_axis_hires_downshift_##inst) > 0),	\
 		.channel_cfg = analog_axis_hires_channel_cfg_##inst,					\
 		.channel_data = analog_axis_hires_channel_data_##inst,					\
 		.calibration = analog_axis_hires_calibration_##inst,					\

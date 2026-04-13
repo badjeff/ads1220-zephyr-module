@@ -37,6 +37,18 @@ properties:
       How often to get new ADC samples for the various configured axes in
       milliseconds. Defaults to 15ms if unspecified.
 
+  poll-period-downshift-ms:
+    type: array
+    description: |
+      If this property is present, poll-period-ms is ignored and the first element
+      is used as the polling interval instead. Must be an array with an odd
+      number of elements in the format [poll-period, downshift-time,
+      downshift-period, ...]. Once the axis stays idle for downshift-time,
+      the polling rate switches to downshift-period to conserve power.
+      Example: <8 5000 15 9000 100 11000 1300> polls at 8ms on init, then after
+      5000ms idle switches to 15ms, then after 9000ms more idle switches to 100ms,
+      then after 11000ms more idle switches to 1300ms.
+
 child-binding:
   properties:
     io-channels:

@@ -24,6 +24,7 @@ This module provides two drivers for high-resolution analog input:
 - int32_t buffer for 24-bit ADC values
 - Multi-configuration per device
 - Per-channel auto-calibration support
+- Poll period downshift - Dynamic polling rate reduction for power saving
 - Other inherited features from original driver
 
 ## Installation
@@ -229,6 +230,26 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | Property | Type | Description |
 |----------|------|-------------|
 | `poll-period-ms` | int | Poll period in milliseconds |
+| `poll-period-downshift-ms` | array | Dynamic polling rate downshift: `[poll-period, downshift-time, downshift-period, ...]` (optional) |
+
+#### Poll Period Downshift
+
+The `poll-period-downshift-ms` property enables dynamic polling rate reduction for power saving. Format:
+```
+<poll-period downshift-time downshift-period [downshift-time downshift-period ...]>
+```
+
+- `poll-period`: Initial polling interval (ms)
+- `downshift-time`: Idle time (ms) before switching to slower rate
+- `downshift-period`: New polling interval (ms) after idle time
+
+**Example**: `<8 5000 15 9000 100 11000 1300>`
+- Polls at 8ms initially
+- After 5000ms idle → switches to 15ms
+- After 9000ms more idle → switches to 100ms
+- After 11000ms more idle → switches to 1300ms
+
+The driver continues polling even at the slowest rate to detect axis activity and upshift immediately. Setting `downshift-period` to 0 stops the polling timer, totally suspended.
 
 ### Axis Child Node
 | Property | Type | Description |
