@@ -1,10 +1,12 @@
 # ADS1220 ADC Module
 
-This module provides two drivers for high-resolution analog input:
+This module provides three drivers for high-resolution analog input:
 
 1. **ADS1220 ADC Driver** - Texas Instruments 24-bit SPI ADC with 4 differential input channels, configurable gain (1-128x), multiple data rates (20-1000 SPS), and optional DRDY interrupt support.
 
-2. **Analog Axis Hi-Res Input Driver** - Fork of Zephyr's `analog-axis` driver with 24-bit buffering, per-channel auto-calibration, and multi-configuration per device. Provides all other inherited features from original driver.
+2. **ADS1220 IDAC GPIO Controller** - GPIO controller that maps GPIO pin states to ADS1220 IDAC (excitation current) settings. Allows dynamic IDAC switching via standard GPIO API.
+
+3. **Analog Axis Hi-Res Input Driver** - Fork of Zephyr's `analog-axis` driver with 24-bit buffering, per-channel auto-calibration, and multi-configuration per device. Provides all other inherited features from original driver.
 
 ## Features
 
@@ -18,6 +20,11 @@ This module provides two drivers for high-resolution analog input:
 - Low-side power switch for RTD/load cell applications
 - Programmable IDAC excitation current (0/10/50/100/250/500/1000/2000 uA)
 - Configurable IDAC1/IDAC2 output pins per channel
+
+### ADS1220 IDAC GPIO Controller
+- Switching IDAC in runtime
+- Allow only enabling excitation only when sensor is actively being read
+- Example: Be used with `avdd-gpios` in analog-axis for combined power + excitation control
 
 ### Analog Axis Hi-Res Input Driver
 - High-resolution ADC support (16-bit+)
@@ -172,8 +179,11 @@ Now enable the driver config in your `<shield>.conf` file:
 CONFIG_SPI=y
 CONFIG_GPIO=y
 CONFIG_ADC=y
-CONFIG_ADC_ADS1220=y
 CONFIG_ADC_LOG_LEVEL_DBG=y
+
+# Enable ADS1220 IDAC
+CONFIG_GPIO=y
+CONFIG_GPIO_LOG_LEVEL_DBG=y
 
 # Enable Analog Axis Hi-Res Input
 CONFIG_INPUT=y
@@ -190,11 +200,6 @@ CONFIG_PM_DEVICE_RUNTIME=y
 ```
 
 ## Configuration Options
-
-### ADS1220 Kconfig (`drivers/adc/Kconfig.ads1220`)
-| Option | Description | Default |
-|--------|-------------|---------|
-| `CONFIG_ADC_ADS1220` | Enable ADS1220 driver | y |
 
 ### Analog Axis Hi-Res Kconfig (`drivers/input/Kconfig.analog_axis_hires`)
 | Option | Description | Default |
@@ -225,6 +230,15 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | `zephyr,input-positive` | int | Positive input channel (0..3: AIN0..3 / 4:AVSS / 5:REFP / 6:AVDD / 7:SHORT) |
 | `zephyr,input-negative` | int | Negative input channel (0..3: AIN0..3 / 4:AVSS / 5:REFP / 6:AVDD / 7:SHORT) |
 | `zephyr,current-source-pin` | uint8-array | IDAC1/IDAC2 connection [IDAC1, IDAC2], requires `CONFIG_ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN` |
+
+### ADS1220 IDAC GPIO Controller Node (`ti,ads1220-idac`)
+| Property | Type | Description |
+|----------|------|-------------|
+| `dev-reg` | int | ADS1220 instance `reg` property value to match with ADC device |
+| `idac-ua-high` | int | IDAC current when GPIO pin is set high (0/10/50/100/250/500/1000/2000 uA) |
+| `idac-ua-low` | int | IDAC current when GPIO pin is cleared (0/10/50/100/250/500/1000/2000 uA) |
+| `skip-reg-write-high` | boolean | Skip writing to ADS1220 config when output is set high (use adc-channel's current-source-pin instead) |
+| `skip-reg-write-low` | boolean | Skip writing to ADS1220 config when output is cleared (use adc-channel's current-source-pin instead) |
 
 ### Analog Axis Hi-Res Node (`analog-axis-hires`)
 | Property | Type | Description |
@@ -289,6 +303,47 @@ The driver continues polling even at the slowest rate to detect axis activity an
    - 4: AIN3/REFN1
    - 5: REFP0
    - 6: REFN0
+
+7. **IDAC GPIO Controller**: The `ti,ads1220-idac` GPIO controller allows dynamic IDAC switching via standard GPIO API. Use `gpio_pin_set_dt()` to switch between `idac-ua-high` and `idac-ua-low` values. This is useful for:
+   - Power saving: Enable IDAC only during measurement
+   - Multi-range sensors: Switch excitation levels for different measurement ranges
+   - Combined with `avdd-gpios`: Control both power supply and excitation current sequentially
+
+Example device tree:
+    ```dts
+    /* ADS1220 ADC device */
+    adc_ads1220: adc_ads1220@0 {
+        compatible = "ti,ads1220";
+        reg = <0>;
+        /* ... SPI config ... */
+
+        /* Channel with fixed IDAC routing via current-source-pin */
+        channel@0 {
+            zephyr,current-source-pin = [05 00]; /* IDAC1 to REFP0, IDAC2 disabled */
+        };
+    };
+
+    /* IDAC GPIO - switch between 500uA (high) and 0uA (low) */
+    gpio_ads1220_idac: gpio_ads1220_idac {
+        compatible = "ti,ads1220-idac";
+        gpio-controller;
+        #gpio-cells = <2>;
+        dev-reg = <0>; /* refer to adc_ads1220 { reg = <0>; }; */
+        idac-ua-high = <250>;
+        idac-ua-low = <0>;
+        skip-reg-write-high; /* skip writing on high, rely on channel setup */
+    };
+
+    /* Analog axis with avdd-gpios to trigger IDAC on each sample */
+    analog_axis_hires_0 {
+        axis-x {
+            io-channels = <&adc_ads1220 0>;
+            avdd-gpios = <&gpio_ads1220_idac 0 0>; /* reserved pin=0, flags=0 */
+        };
+    };
+    ```
+
+   See [`example-tpoint_idac.dtsi`](example-tpoint_idac.dtsi) for a complete working example including SPI pin configuration and analog-axis setup.
 
 ## License
 

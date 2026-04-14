@@ -3,3 +3,4 @@ drivers/adc/adc_context.h
 
 # DT binding reference
 dts/bindings/ads/adc-controller.yaml
+dts/bindings/gpio/gpio-controller.yaml

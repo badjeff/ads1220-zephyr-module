@@ -2,4 +2,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
 rsource "adc/Kconfig"
+rsource "gpio/Kconfig"
 rsource "input/Kconfig"

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define DT_DRV_COMPAT ti_ads1220
+
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/adc.h>
@@ -134,10 +136,12 @@ struct ads1220_config {
 	const struct spi_dt_spec spi;
 	const struct gpio_dt_spec gpio_drdy;
 	bool low_side_power_switch;
+	bool has_idac_ua;
 	uint16_t idac_ua;
 };
 
 struct ads1220_data {
+	const struct device *dev;
 	struct adc_context ctx;
 	struct k_sem acq_sem;
 	struct k_sem drdy_sem;
@@ -150,6 +154,8 @@ struct ads1220_data {
 	uint8_t last_config1;
 	uint8_t last_config2;
 	uint8_t last_config3;
+	bool has_idac_ua;
+	uint16_t idac_ua;
 };
 
 static inline int ads1220_transceive(const struct device *dev,
@@ -210,6 +216,242 @@ static int ads1220_command(const struct device *dev, uint8_t cmd)
 	return ads1220_transceive(dev, tx_buf, 1, rx_buf, 1);
 }
 
+static inline int ads1220_gain_to_bit(uint8_t gain, uint8_t *val)
+{
+	switch (gain) {
+	case ADC_GAIN_1:
+		*val = ADS1220_GAIN_1;
+		break;
+	case ADC_GAIN_2:
+		*val = ADS1220_GAIN_2;
+		break;
+	case ADC_GAIN_4:
+		*val = ADS1220_GAIN_4;
+		break;
+	case ADC_GAIN_8:
+		*val = ADS1220_GAIN_8;
+		break;
+	case ADC_GAIN_16:
+		*val = ADS1220_GAIN_16;
+		break;
+	case ADC_GAIN_32:
+		*val = ADS1220_GAIN_32;
+		break;
+	case ADC_GAIN_64:
+		*val = ADS1220_GAIN_64;
+		break;
+	case ADC_GAIN_128:
+		*val = ADS1220_GAIN_128;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static inline int ads1220_mux_to_bit(uint8_t pos_input, uint8_t neg_input, uint8_t *val)
+{
+	switch (pos_input) {
+	case ADS1220_INPUT_AIN0:
+		if (neg_input == ADS1220_INPUT_AIN1) {
+			*val = ADS1220_MUX_P_AIN0_N_AIN1;
+		} else if (neg_input == ADS1220_INPUT_AIN2) {
+			*val = ADS1220_MUX_P_AIN0_N_AIN2;
+		} else if (neg_input == ADS1220_INPUT_AIN3) {
+			*val = ADS1220_MUX_P_AIN0_N_AIN3;
+		} else if (neg_input == ADS1220_INPUT_AVSS) {
+			*val = ADS1220_MUX_P_AIN0_N_AVSS;
+		} else {
+			return -EINVAL;
+		}
+		break;
+	case ADS1220_INPUT_AIN1:
+		if (neg_input == ADS1220_INPUT_AIN0) {
+			*val = ADS1220_MUX_P_AIN1_N_AIN0;
+		} else if (neg_input == ADS1220_INPUT_AIN2) {
+			*val = ADS1220_MUX_P_AIN1_N_AIN2;
+		} else if (neg_input == ADS1220_INPUT_AIN3) {
+			*val = ADS1220_MUX_P_AIN1_N_AIN3;
+		} else if (neg_input == ADS1220_INPUT_AVSS) {
+			*val = ADS1220_MUX_P_AIN1_N_AVSS;
+		} else {
+			return -EINVAL;
+		}
+		break;
+	case ADS1220_INPUT_AIN2:
+		if (neg_input == ADS1220_INPUT_AIN3) {
+			*val = ADS1220_MUX_P_AIN2_N_AIN3;
+		} else if (neg_input == ADS1220_INPUT_AVSS) {
+			*val = ADS1220_MUX_P_AIN2_N_AVSS;
+		} else {
+			return -EINVAL;
+		}
+		break;
+	case ADS1220_INPUT_AIN3:
+		if (neg_input == ADS1220_INPUT_AIN2) {
+			*val = ADS1220_MUX_P_AIN3_N_AIN2;
+		} else if (neg_input == ADS1220_INPUT_AVSS) {
+			*val = ADS1220_MUX_P_AIN3_N_AVSS;
+		} else {
+			return -EINVAL;
+		}
+		break;
+	case ADS1220_INPUT_REFP:
+		*val = ADS1220_MUX_P_REFP_N_REFN;
+		break;
+	case ADS1220_INPUT_AVDD:
+		*val = ADS1220_MUX_P_AVDD_N_AVSS;
+		break;
+	case ADS1220_INPUT_SHORT:
+		*val = ADS1220_MUX_P_N_SHORT;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static inline int ads1220_data_rate_to_bit(uint16_t acq_time, uint8_t *val, uint32_t *ready_time_us)
+{
+	if (acq_time == ADC_ACQ_TIME_DEFAULT) {
+		*val = ADS1220_DR_1000;
+		*ready_time_us = 1000 * 1000 / 1000;
+	} else if (acq_time == ADC_ACQ_TIME_MAX) {
+		*val = ADS1220_DR_20;
+		*ready_time_us = 1000 * 1000 / 20;
+	} else {
+		switch (acq_time) {
+		case ADS1220_ACQ_TIME_1000:
+			*val = ADS1220_DR_1000;
+			*ready_time_us = 1000 * 1000 / 1000;
+			break;
+		case ADS1220_ACQ_TIME_600:
+			*val = ADS1220_DR_600;
+			*ready_time_us = 1000 * 1000 / 600;
+			break;
+		case ADS1220_ACQ_TIME_330:
+			*val = ADS1220_DR_330;
+			*ready_time_us = 1000 * 1000 / 330;
+			break;
+		case ADS1220_ACQ_TIME_175:
+			*val = ADS1220_DR_175;
+			*ready_time_us = 1000 * 1000 / 175;
+			break;
+		case ADS1220_ACQ_TIME_90:
+			*val = ADS1220_DR_90;
+			*ready_time_us = 1000 * 1000 / 90;
+			break;
+		case ADS1220_ACQ_TIME_45:
+			*val = ADS1220_DR_45;
+			*ready_time_us = 1000 * 1000 / 45;
+			break;
+		case ADS1220_ACQ_TIME_20:
+			*val = ADS1220_DR_20;
+			*ready_time_us = 1000 * 1000 / 20;
+			break;
+		default:
+			*val = ADS1220_DR_1000;
+			*ready_time_us = 1000;
+			break;
+		}
+	}
+	return 0;
+}
+
+static inline int ads1220_vref_to_bit(uint8_t reference, uint8_t *val)
+{
+	switch (reference) {
+	case ADC_REF_INTERNAL:
+		*val = ADS1220_VREF_INTERNAL;
+		break;
+	case ADC_REF_EXTERNAL0:
+		*val = ADS1220_VREF_EXTERNAL_REFP0;
+		break;
+	case ADC_REF_EXTERNAL1:
+		*val = ADS1220_VREF_EXTERNAL_REFP1;
+		break;
+	case ADC_REF_VDD_1:
+		*val = ADS1220_VREF_AVDD;
+		break;
+	default:
+		*val = ADS1220_VREF_INTERNAL;
+		break;
+	}
+	return 0;
+}
+
+static inline int ads1220_idac_ua_to_bit(uint16_t idac_ua, uint8_t *val)
+{
+	switch (idac_ua) {	
+	case 0:
+		*val = ADS1220_IDAC_UA_0;
+		break;
+	case 10:
+		*val = ADS1220_IDAC_UA_10;
+		break;
+	case 50:
+		*val = ADS1220_IDAC_UA_50;
+		break;
+	case 100:
+		*val = ADS1220_IDAC_UA_100;
+		break;
+	case 250:
+		*val = ADS1220_IDAC_UA_250;
+		break;
+	case 500:
+		*val = ADS1220_IDAC_UA_500;
+		break;
+	case 1000:
+		*val = ADS1220_IDAC_UA_1000;
+		break;
+	case 2000:
+		*val = ADS1220_IDAC_UA_2000;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+int ads1220_set_idac_ua(const struct device *dev, uint16_t idac_ua, bool reg_write)
+{
+	struct ads1220_data *data = dev->data;
+
+	uint8_t idac_current;
+	int idac_ua_err = ads1220_idac_ua_to_bit(idac_ua, &idac_current);
+	if (idac_ua_err) {
+		LOG_WRN("Invalid idac-ua: %d, ignoring", idac_ua);
+	}
+	bool idac_valid = !idac_ua_err;
+
+	if (idac_valid) {
+		data->has_idac_ua = true;
+		data->idac_ua = idac_ua;
+
+		// LOG_DBG("reg_write: %s", reg_write ? "yes" : "no");
+		if (reg_write) {
+			uint8_t config2 = data->last_config2;
+			config2 = (config2 & ~ADS1220_IDAC_CURRENT_MASK) |
+					FIELD_PREP(ADS1220_IDAC_CURRENT_MASK, idac_current);
+
+			uint8_t read_config2;
+			int ret = ads1220_reg_write(dev, ADS1220_CONFIG2_REG, config2);
+			if (ret < 0) {
+				return ret;
+			}
+			ads1220_reg_read(dev, ADS1220_CONFIG2_REG, &read_config2, 1);
+			if (read_config2 != config2) {
+				LOG_ERR("config2 mismatch! 0x%02X != 0x%02X", config2, read_config2);
+				return -EIO;
+			}
+			// LOG_DBG("wrotw config2");
+			data->last_config2 = config2;
+		}
+
+	}
+	return 0;
+}
+
 static int ads1220_setup(const struct device *dev,
 			   const struct adc_channel_cfg *channel_cfg)
 {
@@ -227,7 +469,8 @@ static int ads1220_setup(const struct device *dev,
 	uint8_t psw_value = 0;
 	uint8_t i1mux_value = 0;
 	uint8_t i2mux_value = 0;
-	uint8_t idac_current = 0;
+	bool idac_valid = false;
+	uint8_t idac_current;
 	const struct ads1220_config *cfg = dev->config;
 	struct ads1220_data *data = dev->data;
 
@@ -238,99 +481,18 @@ static int ads1220_setup(const struct device *dev,
 	// LOG_DBG("setup: last active CONFIG0/1/2=0x%02X / 0x%02X / 0x%02X / 0x%02X", 
 	// 	config0, config1, config2, config3);
 
-	gain = channel_cfg->gain;
-
-	switch (gain) {
-	case ADC_GAIN_1:
-		gain = ADS1220_GAIN_1;
-		break;
-	case ADC_GAIN_2:
-		gain = ADS1220_GAIN_2;
-		break;
-	case ADC_GAIN_4:
-		gain = ADS1220_GAIN_4;
-		break;
-	case ADC_GAIN_8:
-		gain = ADS1220_GAIN_8;
-		break;
-	case ADC_GAIN_16:
-		gain = ADS1220_GAIN_16;
-		break;
-	case ADC_GAIN_32:
-		gain = ADS1220_GAIN_32;
-		break;
-	case ADC_GAIN_64:
-		gain = ADS1220_GAIN_64;
-		break;
-	case ADC_GAIN_128:
-		gain = ADS1220_GAIN_128;
-		break;
-	default:
+	int gain_err = ads1220_gain_to_bit(channel_cfg->gain, &gain);
+	if (gain_err) {
 		LOG_WRN("Invalid given gain: %d. fallback to ADC_GAIN_1", gain);
 		gain = ADS1220_GAIN_1;
-		break;
 	}
 
 	uint8_t pos_input = channel_cfg->input_positive;
 	uint8_t neg_input = channel_cfg->input_negative;
-	mux_value = 0;
-
-	switch (pos_input) {
-	case ADS1220_INPUT_AIN0:
-		if (neg_input == ADS1220_INPUT_AIN1) {
-			mux_value = ADS1220_MUX_P_AIN0_N_AIN1;
-		} else if (neg_input == ADS1220_INPUT_AIN2) {
-			mux_value = ADS1220_MUX_P_AIN0_N_AIN2;
-		} else if (neg_input == ADS1220_INPUT_AIN3) {
-			mux_value = ADS1220_MUX_P_AIN0_N_AIN3;
-		} else if (neg_input == ADS1220_INPUT_AVSS) {
-			mux_value = ADS1220_MUX_P_AIN0_N_AVSS;
-		} else {
-			return -EINVAL;
-		}
-		break;
-	case ADS1220_INPUT_AIN1:
-		if (neg_input == ADS1220_INPUT_AIN0) {
-			mux_value = ADS1220_MUX_P_AIN1_N_AIN0;
-		} else if (neg_input == ADS1220_INPUT_AIN2) {
-			mux_value = ADS1220_MUX_P_AIN1_N_AIN2;
-		} else if (neg_input == ADS1220_INPUT_AIN3) {
-			mux_value = ADS1220_MUX_P_AIN1_N_AIN3;
-		} else if (neg_input == ADS1220_INPUT_AVSS) {
-			mux_value = ADS1220_MUX_P_AIN1_N_AVSS;
-		} else {
-			return -EINVAL;
-		}
-		break;
-	case ADS1220_INPUT_AIN2:
-		if (neg_input == ADS1220_INPUT_AIN3) {
-			mux_value = ADS1220_MUX_P_AIN2_N_AIN3;
-		} else if (neg_input == ADS1220_INPUT_AVSS) {
-			mux_value = ADS1220_MUX_P_AIN2_N_AVSS;
-		} else {
-			return -EINVAL;
-		}
-		break;
-	case ADS1220_INPUT_AIN3:
-		if (neg_input == ADS1220_INPUT_AIN2) {
-			mux_value = ADS1220_MUX_P_AIN3_N_AIN2;
-		} else if (neg_input == ADS1220_INPUT_AVSS) {
-			mux_value = ADS1220_MUX_P_AIN3_N_AVSS;
-		} else {
-			return -EINVAL;
-		}
-		break;
-	case ADS1220_INPUT_REFP:
-		mux_value = ADS1220_MUX_P_REFP_N_REFN;
-		break;
-	case ADS1220_INPUT_AVDD:
-		mux_value = ADS1220_MUX_P_AVDD_N_AVSS;
-		break;
-	case ADS1220_INPUT_SHORT:
-		mux_value = ADS1220_MUX_P_N_SHORT;
-		break;
-	default:
-		return -EINVAL;
+	int mux_err = ads1220_mux_to_bit(pos_input, neg_input, &mux_value);
+	if (mux_err) {
+		LOG_WRN("Invalid given input-positive/negative: %d/%d.", pos_input, neg_input);
+		return mux_err;
 	}
 
 	config0 = (config0 & ~(ADS1220_MUX_MASK | ADS1220_GAIN_MASK)) |
@@ -340,112 +502,32 @@ static int ads1220_setup(const struct device *dev,
 	// 	(unsigned int)(config0 & ADS1220_MUX_MASK),
 	// 	(unsigned int)(config0 & ADS1220_GAIN_MASK));
 
-	if (acq_time == ADC_ACQ_TIME_DEFAULT) {
-		data_rate = ADS1220_DR_1000;
-		ready_time_us = 1000 * 1000 / 1000;
-	} else if (acq_time == ADC_ACQ_TIME_MAX) {
-		data_rate = ADS1220_DR_20;
-		ready_time_us = 1000 * 1000 / 20;
-	} else {
-		switch (acq_time) {
-		case ADS1220_ACQ_TIME_1000:
-			data_rate = ADS1220_DR_1000;
-			ready_time_us = 1000 * 1000 / 1000;
-			break;
-		case ADS1220_ACQ_TIME_600:
-			data_rate = ADS1220_DR_600;
-			ready_time_us = 1000 * 1000 / 600;
-			break;
-		case ADS1220_ACQ_TIME_330:
-			data_rate = ADS1220_DR_330;
-			ready_time_us = 1000 * 1000 / 330;
-			break;
-		case ADS1220_ACQ_TIME_175:
-			data_rate = ADS1220_DR_175;
-			ready_time_us = 1000 * 1000 / 175;
-			break;
-		case ADS1220_ACQ_TIME_90:
-			data_rate = ADS1220_DR_90;
-			ready_time_us = 1000 * 1000 / 90;
-			break;
-		case ADS1220_ACQ_TIME_45:
-			data_rate = ADS1220_DR_45;
-			ready_time_us = 1000 * 1000 / 45;
-			break;
-		case ADS1220_ACQ_TIME_20:
-			data_rate = ADS1220_DR_20;
-			ready_time_us = 1000 * 1000 / 20;
-			break;
-		default:
-			data_rate = ADS1220_DR_1000;
-			ready_time_us = 1000;
-			break;
-		}
-	}
+	ads1220_data_rate_to_bit(acq_time, &data_rate, &ready_time_us);
 
 	config1 = (config1 & ~(ADS1220_DR_MASK | ADS1220_MODE_MASK)) |
 		  data_rate | FIELD_PREP(ADS1220_MODE_MASK, 1);
 	data->ready_time = K_USEC(ready_time_us + (ready_time_us / 10));
-	// LOG_DBG("CONFIG1: DR=0x%02X", (unsigned int)(config1 & ADS1220_DR_MASK));
 
-	switch (channel_cfg->reference) {
-	case ADC_REF_INTERNAL:
-		vref_value = ADS1220_VREF_INTERNAL;
-		break;
-	case ADC_REF_EXTERNAL0:
-		vref_value = ADS1220_VREF_EXTERNAL_REFP0;
-		break;
-	case ADC_REF_EXTERNAL1:
-		vref_value = ADS1220_VREF_EXTERNAL_REFP1;
-		break;
-	case ADC_REF_VDD_1:
-		vref_value = ADS1220_VREF_AVDD;
-		break;
-	default:
-		// LOG_DBG("Unsupported reference, using default internal");
-		vref_value = ADS1220_VREF_INTERNAL;
-		break;
-	}
+	ads1220_vref_to_bit(channel_cfg->reference, &vref_value);
 
 	if (cfg->low_side_power_switch) {
 		psw_value = BIT(3);
 	}
 
-	switch (cfg->idac_ua) {
-	case 0:
-		idac_current = ADS1220_IDAC_UA_0;
-		break;
-	case 10:
-		idac_current = ADS1220_IDAC_UA_10;
-		break;
-	case 50:
-		idac_current = ADS1220_IDAC_UA_50;
-		break;
-	case 100:
-		idac_current = ADS1220_IDAC_UA_100;
-		break;
-	case 250:
-		idac_current = ADS1220_IDAC_UA_250;
-		break;
-	case 500:
-		idac_current = ADS1220_IDAC_UA_500;
-		break;
-	case 1000:
-		idac_current = ADS1220_IDAC_UA_1000;
-		break;
-	case 2000:
-		idac_current = ADS1220_IDAC_UA_2000;
-		break;
-	default:
-		LOG_WRN("Invalid idac-ua: %d, default to disabled", cfg->idac_ua);
-		idac_current = ADS1220_IDAC_UA_0;
-		break;
+	if (data->has_idac_ua) {
+		int idac_ua_err = ads1220_idac_ua_to_bit(data->idac_ua, &idac_current);
+		if (idac_ua_err) {
+			LOG_WRN("Invalid idac-ua: %d, ignoring", data->idac_ua);
+		}
+		idac_valid = !idac_ua_err;
 	}
 
 	config2 = (config2 & ~0x30) | (vref_value << 4);
 	config2 = (config2 & ~0x08) | psw_value;
-	config2 = (config2 & ~ADS1220_IDAC_CURRENT_MASK) |
-		  FIELD_PREP(ADS1220_IDAC_CURRENT_MASK, idac_current);
+	if (idac_valid) {
+		config2 = (config2 & ~ADS1220_IDAC_CURRENT_MASK) |
+			  FIELD_PREP(ADS1220_IDAC_CURRENT_MASK, idac_current);
+	}
 	// LOG_DBG("CONFIG2: VREF=0x%02X, PSW=%d, IDAC=%u",
 	// 	(config2 >> 4) & 0x03, (config2 >> 3) & 0x01,
 	// 	(unsigned int)(config2 & ADS1220_IDAC_CURRENT_MASK));
@@ -819,12 +901,15 @@ static int ads1220_init(const struct device *dev)
 	k_sem_init(&data->acq_sem, 0, 1);
 	k_sem_init(&data->drdy_sem, 0, 1);
 
+	data->dev = dev;
 	data->has_drdy = false;
 	data->ready_time = K_USEC(1000);
 	data->last_config0 = 0x00;
 	data->last_config1 = 0x00;
 	data->last_config2 = 0x00;
 	data->last_config3 = 0x00;
+	data->has_idac_ua = cfg->has_idac_ua;
+	data->idac_ua = cfg->idac_ua;
 
 	ret = ads1220_configure_gpio(dev);
 	if (ret != 0) {
@@ -843,8 +928,6 @@ static int ads1220_init(const struct device *dev)
 	return 0;
 }
 
-#define DT_DRV_COMPAT ti_ads1220
-
 #define ADC_ADS1220_SPI_MODE (SPI_OP_MODE_MASTER | SPI_MODE_CPHA | SPI_WORD_SET(8))
 
 #define ADC_ADS1220_INST_DEFINE(n)						\
@@ -853,6 +936,7 @@ static int ads1220_init(const struct device *dev)
 		.spi = SPI_DT_SPEC_INST_GET(n, ADC_ADS1220_SPI_MODE, 0),	\
 		.gpio_drdy = GPIO_DT_SPEC_INST_GET_OR(n, drdy_gpios, {0}),	\
 		.low_side_power_switch = DT_INST_PROP(n, low_side_power_switch),	\
+		.has_idac_ua = DT_INST_NODE_HAS_PROP(n, idac_ua),		\
 		.idac_ua = DT_INST_PROP_OR(n, idac_ua, 0),			\
 	};									\
 	static struct ads1220_data data_##n;					\
@@ -862,3 +946,18 @@ static int ads1220_init(const struct device *dev)
 			      CONFIG_ADC_INIT_PRIORITY, &ads1220_api);
 
 DT_INST_FOREACH_STATUS_OKAY(ADC_ADS1220_INST_DEFINE)
+
+static int ads1220_set_idac_ua_by_reg(uint16_t reg, uint16_t ua, bool write) {
+
+#define EXEC__ADS1220_SET_IDAC_UA_BY_REG(n) \
+    if (DT_INST_REG_ADDR(n) == reg) { \
+        return ads1220_set_idac_ua(data_##n.dev, ua, write); \
+    }
+
+    DT_INST_FOREACH_STATUS_OKAY(EXEC__ADS1220_SET_IDAC_UA_BY_REG)
+
+    return 0;
+}
+
+int (*_ptr_ads1220_set_idac_ua_by_reg)(uint16_t, uint16_t, bool) 
+	= ads1220_set_idac_ua_by_reg;

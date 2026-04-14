@@ -29,7 +29,6 @@ properties:
   idac-ua:
     type: int
     required: false
-    default: 0
     description: |
       IDAC current setting in microamperes. Configures the excitation current
       sources IDAC1 and IDAC2. Default is 0 (disabled).

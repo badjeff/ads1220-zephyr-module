@@ -489,7 +489,7 @@ static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 					data->idle_level = 0;
 					data->poll_period_ms = cfg->poll_period_downshift_ms[0];
 					// LOG_DBG("Axis active or calibrating, reset to poll period %d ms", data->poll_period_ms);
-					LOG_INF("Upshift to level %d, period %d ms", data->idle_level, data->poll_period_ms);
+					LOG_INF("Upshift to level %d, poll per %d ms", data->idle_level, data->poll_period_ms);
 					k_timer_start(&data->timer, K_MSEC(data->poll_period_ms),
 						    K_MSEC(data->poll_period_ms));
 				}
@@ -542,13 +542,13 @@ static void analog_axis_hires_downshift_work(struct k_work *work)
 	data->idle_level = next_level;
 
 	if (new_period < 1) {
-		LOG_INF("Downshift to level %d, stopping timer", next_level);
+		LOG_INF("Downshift to level %d, polling suspended", next_level);
 #ifdef CONFIG_PM_DEVICE
 		atomic_set(&data->suspended, 1);
 #endif
 		k_timer_stop(&data->timer);
 	} else {
-		LOG_INF("Downshift to level %d, period %d ms", next_level, new_period);
+		LOG_INF("Downshift to level %d, poll per %d ms", next_level, new_period);
 		k_timer_start(&data->timer, K_MSEC(new_period), K_MSEC(new_period));
 	}
 }

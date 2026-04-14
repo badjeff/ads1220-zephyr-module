@@ -1,0 +1,53 @@
+# Copyright (c) 2026 badjeff
+# SPDX-License-Identifier: Apache-2.0
+
+description: Texas Instrument ADS1220 IDAC GPIO controller
+
+compatible: "ti,ads1220-idac"
+
+include: [gpio-controller.yaml]
+
+properties:
+  dev-reg:
+    type: int
+    required: true
+    description: |
+      ADS1220 instance reg property value. Used to match this GPIO controller
+      with the corresponding ADS1220 ADC device.
+
+  idac-ua-high:
+    type: int
+    required: true
+    description: |
+      IDAC current (in microamperes) when output pin is set high.
+      Valid values: 0, 10, 50, 100, 250, 500, 1000, 2000.
+    enum: [0, 10, 50, 100, 250, 500, 1000, 2000]
+
+  idac-ua-low:
+    type: int
+    required: true
+    description: |
+      IDAC current (in microamperes) when output pin is set low.
+      Valid values: 0, 10, 50, 100, 250, 500, 1000, 2000.
+    enum: [0, 10, 50, 100, 250, 500, 1000, 2000]
+
+  skip-reg-write-high:
+    type: boolean
+    description: |
+      If true, skip writing to ADS1220 config register when output is 
+      set high. Useful when IDAC is configured via adc-channel's 
+      current-source-pin property instead.
+
+  skip-reg-write-low:
+    type: boolean
+    description: |
+      If true, skip writing to ADS1220 config register when output is 
+      set low. Useful when IDAC is configured via adc-channel's 
+      current-source-pin property instead.
+
+  "#gpio-cells":
+    const: 2
+
+gpio-cells:
+  - pin
+  - flags

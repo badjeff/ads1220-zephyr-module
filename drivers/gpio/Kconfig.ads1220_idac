@@ -1,0 +1,10 @@
+# Copyright (c) 2026 badjeff
+# SPDX-License-Identifier: Apache-2.0
+
+config GPIO_ADS1220_IDAC
+	bool "GPIO ADS1220 IDAC"
+	default y
+	depends on DT_HAS_TI_ADS1220_IDAC_ENABLED
+	depends on ADC_ADS1220
+	help
+	  Enable the driver for ADS1220 IDAC GPIO.
