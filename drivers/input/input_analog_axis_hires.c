@@ -64,7 +64,8 @@ struct analog_axis_hires_data {
 	struct k_work_delayable downshift_work;
 	const struct device *dev;
 	uint32_t poll_period_ms;
-	uint8_t idle_level;
+	uint8_t downshift_level;
+	uint8_t resume_level;
 	bool use_same_adc_ch_cfg;
 	bool axis_active;
 
@@ -386,6 +387,47 @@ static void analog_axis_hires_loop(const struct device *dev)
 	k_sem_give(&data->cal_lock);
 }
 
+static void analog_axis_hires_suspend(const struct device *dev)
+{
+	struct analog_axis_hires_data *data = dev->data;
+
+#ifdef CONFIG_PM_DEVICE
+	atomic_set(&data->suspended, 1);
+#endif
+
+	k_timer_stop(&data->timer);
+	k_work_cancel_delayable(&data->downshift_work);
+}
+
+static void analog_axis_hires_set_poll_level(const struct device *dev, uint8_t lvl)
+{
+	const struct analog_axis_hires_config *cfg = dev->config;
+	struct analog_axis_hires_data *data = dev->data;
+
+	data->poll_period_ms = cfg->has_poll_period_downshift_ms ?
+		cfg->poll_period_downshift_ms[lvl] : cfg->poll_period_ms;
+	data->downshift_level = lvl;
+	k_timer_start(&data->timer,
+					K_MSEC(data->poll_period_ms), K_MSEC(data->poll_period_ms));
+
+#ifdef CONFIG_PM_DEVICE
+	if (atomic_get(&data->suspended) == 1) {
+		atomic_set(&data->suspended, 0);
+		k_sem_give(&data->wakeup);
+	}
+#endif
+}
+
+static void analog_axis_hires_resume(const struct device *dev)
+{
+	struct analog_axis_hires_data *data = dev->data;
+	if (data->downshift_level > data->resume_level) {
+		analog_axis_hires_set_poll_level(dev, data->resume_level);
+		LOG_INF("Resume to level %d, poll per %d ms", 
+			data->downshift_level, data->poll_period_ms);
+	}
+}
+
 static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 {
 	const struct device *dev = arg1;
@@ -485,17 +527,13 @@ static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 
 			if (data->axis_active || calibrating) {
 				data->axis_active = false;
-				if (data->idle_level > 0) {
-					data->idle_level = 0;
-					data->poll_period_ms = cfg->poll_period_downshift_ms[0];
-					// LOG_DBG("Axis active or calibrating, reset to poll period %d ms", data->poll_period_ms);
-					LOG_INF("Upshift to level %d, poll per %d ms", data->idle_level, data->poll_period_ms);
-					k_timer_start(&data->timer, K_MSEC(data->poll_period_ms),
-						    K_MSEC(data->poll_period_ms));
-				}
 				k_work_cancel_delayable(&data->downshift_work);
-			} else if (data->idle_level < cfg->num_downshift_levels) {
-				uint8_t level = data->idle_level;
+				if (data->downshift_level > 0) {
+					analog_axis_hires_set_poll_level(dev, 0);
+					LOG_INF("Upshift to level %d, poll per %d ms", data->downshift_level, data->poll_period_ms);
+				}
+			} else if (data->downshift_level < cfg->num_downshift_levels) {
+				uint8_t level = data->downshift_level;
 				uint32_t downshift_time = cfg->poll_period_downshift_ms[level * 2 + 1];
 				// LOG_DBG("Schedule downshift: level=%d time=%dms", level, downshift_time);
 				k_work_schedule_for_queue(&k_sys_work_q, &data->downshift_work, K_MSEC(downshift_time));
@@ -521,32 +559,29 @@ static void analog_axis_hires_downshift_work(struct k_work *work)
 	}
 #endif
 
-	if (data->idle_level >= cfg->num_downshift_levels) {
-		LOG_DBG("Already at max level %d", data->idle_level);
+	if (data->downshift_level >= cfg->num_downshift_levels) {
+		LOG_DBG("Already at max level %d", data->downshift_level);
 		return;
 	}
 
-	uint8_t next_level = data->idle_level + 1;
+	uint8_t next_level = data->downshift_level + 1;
 
 	uint32_t new_period = data->poll_period_ms;
 	const uint32_t *downshift = cfg->poll_period_downshift_ms;
 	
-	// LOG_DBG("Downshift work: idle_level=%d next_level=%d num_levels=%d",
-	// 	data->idle_level, next_level, cfg->num_downshift_levels);
+	// LOG_DBG("Downshift work: downshift_level=%d next_level=%d num_levels=%d",
+	// 	data->downshift_level, next_level, cfg->num_downshift_levels);
 	for (uint8_t i = 0; i < next_level && i < cfg->num_downshift_levels; i++) {
 		new_period = downshift[i * 2 + 2];
 		// LOG_DBG("  i=%d idx=%d period=%d", i, i*2+2, new_period);
 	}
 
 	data->poll_period_ms = new_period;
-	data->idle_level = next_level;
+	data->downshift_level = next_level;
 
 	if (new_period < 1) {
 		LOG_INF("Downshift to level %d, polling suspended", next_level);
-#ifdef CONFIG_PM_DEVICE
-		atomic_set(&data->suspended, 1);
-#endif
-		k_timer_stop(&data->timer);
+		analog_axis_hires_suspend(data->dev);
 	} else {
 		LOG_INF("Downshift to level %d, poll per %d ms", next_level, new_period);
 		k_timer_start(&data->timer, K_MSEC(new_period), K_MSEC(new_period));
@@ -569,8 +604,19 @@ static int analog_axis_hires_init(const struct device *dev)
 
 	data->poll_period_ms = cfg->has_poll_period_downshift_ms ?
 		cfg->poll_period_downshift_ms[0] : cfg->poll_period_ms;
-	data->idle_level = 0;
+	data->downshift_level = 0;
 	data->axis_active = false;
+
+	if (cfg->has_poll_period_downshift_ms) {
+		for (i = cfg->num_downshift_levels; i > 0; i--) {
+			if (cfg->poll_period_downshift_ms[i * 2] > 0) {
+				data->resume_level = i;
+				break;
+			}
+		}
+	} else {
+		data->resume_level = 0;
+	}
 
 	for (i = 0; i < cfg->num_channels; i++) {
 		struct analog_axis_hires_channel_data *axis_data = &cfg->channel_data[i];
@@ -625,28 +671,16 @@ static int analog_axis_hires_init(const struct device *dev)
 }
 
 #ifdef CONFIG_PM_DEVICE
+
 static int analog_axis_hires_pm_action(const struct device *dev,
 				 enum pm_device_action action)
 {
-	const struct analog_axis_hires_config *cfg = dev->config;
-	struct analog_axis_hires_data *data = dev->data;
-
 	switch (action) {
 	case PM_DEVICE_ACTION_SUSPEND:
-		atomic_set(&data->suspended, 1);
-		k_timer_stop(&data->timer);
-		k_work_cancel_delayable(&data->downshift_work);
+		analog_axis_hires_suspend(dev);
 		break;
 	case PM_DEVICE_ACTION_RESUME:
-		data->poll_period_ms = cfg->has_poll_period_downshift_ms ?
-			cfg->poll_period_downshift_ms[0] : cfg->poll_period_ms;
-		data->idle_level = 0;
-		data->axis_active = false;
-		k_timer_start(&data->timer,
-			      K_MSEC(data->poll_period_ms),
-			      K_MSEC(data->poll_period_ms));
-		atomic_set(&data->suspended, 0);
-		k_sem_give(&data->wakeup);
+		analog_axis_hires_resume(dev);
 		break;
 	default:
 		return -ENOTSUP;
@@ -654,7 +688,7 @@ static int analog_axis_hires_pm_action(const struct device *dev,
 
 	return 0;
 }
-#endif
+#endif /* CONFIG_PM_DEVICE */
 
 #define ANALOG_AXIS_CHANNEL_CFG_DEF(node_id) \
 	{ \
