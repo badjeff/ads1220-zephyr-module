@@ -118,4 +118,10 @@ int analog_axis_hires_calibration_set(const struct device *dev,
 
 /** @} */
 
+// Runtime configurable attributes
+enum analog_axis_hires_attributes {
+	ANALOG_AXIS_HIRES_ATTR_SUSPEND,
+  ANALOG_AXIS_HIRES_ATTR_RESUME
+};
+
 #endif /* ZEPHYR_INCLUDE_INPUT_ANALOG_AXIS_HIRES_H_ */

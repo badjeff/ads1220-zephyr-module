@@ -12,6 +12,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -590,7 +591,6 @@ static void analog_axis_hires_downshift_work(struct k_work *work)
 
 static void analog_axis_hires_reset_calib_state(const struct device *dev, bool force)
 {
-	struct analog_axis_hires_data *data = dev->data;
 	const struct analog_axis_hires_config *cfg = dev->config;
 	int i;
 
@@ -680,6 +680,36 @@ static int analog_axis_hires_init(const struct device *dev)
 	return 0;
 }
 
+static int analog_axis_hires_attr_set(const struct device *dev, enum sensor_channel chan,
+                            					enum sensor_attribute attr, 
+																			const struct sensor_value *val) {
+    int err = 0;
+
+    if (unlikely(chan != SENSOR_CHAN_ALL)) {
+        return -ENOTSUP;
+    }
+
+    switch ((uint32_t)attr) {
+    case ANALOG_AXIS_HIRES_ATTR_SUSPEND:
+        analog_axis_hires_suspend(dev);
+        break;
+
+		case ANALOG_AXIS_HIRES_ATTR_RESUME:
+        analog_axis_hires_resume(dev);
+        break;
+
+    default:
+        LOG_ERR("Unknown attribute");
+        err = -ENOTSUP;
+    }
+
+    return err;
+}
+
+static const struct sensor_driver_api analog_axis_hires_driver_api = {
+    .attr_set = analog_axis_hires_attr_set,
+};
+
 #ifdef CONFIG_PM_DEVICE
 
 static int analog_axis_hires_pm_action(const struct device *dev,
@@ -758,6 +788,6 @@ static int analog_axis_hires_pm_action(const struct device *dev,
 												\
 	DEVICE_DT_INST_DEFINE(inst, analog_axis_hires_init, PM_DEVICE_DT_INST_GET(inst),		\
 			      &analog_axis_hires_data_##inst, &analog_axis_hires_cfg_##inst,		\
-			      POST_KERNEL, CONFIG_INPUT_INIT_PRIORITY, NULL);
+			      POST_KERNEL, CONFIG_INPUT_INIT_PRIORITY, &analog_axis_hires_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(ANALOG_AXIS_INIT)
