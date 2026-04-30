@@ -51,6 +51,8 @@ struct analog_axis_hires_config {
 	const uint32_t *poll_period_downshift_ms;
 	const uint8_t num_downshift_levels;
 	const bool has_poll_period_downshift_ms;
+	const struct gpio_dt_spec gpio_poll_period_en;
+	const bool has_gpio_poll_period_en;
 	const struct analog_axis_hires_channel_config *channel_cfg;
 	struct analog_axis_hires_channel_data *channel_data;
 	struct analog_axis_hires_calibration *calibration;
@@ -388,8 +390,9 @@ static void analog_axis_hires_loop(const struct device *dev)
 	k_sem_give(&data->cal_lock);
 }
 
-static void analog_axis_hires_suspend(const struct device *dev)
+void analog_axis_hires_suspend(const struct device *dev)
 {
+	const struct analog_axis_hires_config *cfg = dev->config;
 	struct analog_axis_hires_data *data = dev->data;
 
 #ifdef CONFIG_PM_DEVICE
@@ -398,6 +401,10 @@ static void analog_axis_hires_suspend(const struct device *dev)
 
 	k_timer_stop(&data->timer);
 	k_work_cancel_delayable(&data->downshift_work);
+
+	if (cfg->has_gpio_poll_period_en) {
+		gpio_pin_set_dt(&cfg->gpio_poll_period_en, 0);
+	}
 }
 
 static void analog_axis_hires_set_poll_level(const struct device *dev, uint8_t lvl)
@@ -419,13 +426,18 @@ static void analog_axis_hires_set_poll_level(const struct device *dev, uint8_t l
 #endif
 }
 
-static void analog_axis_hires_resume(const struct device *dev)
+void analog_axis_hires_resume(const struct device *dev)
 {
+	const struct analog_axis_hires_config *cfg = dev->config;
 	struct analog_axis_hires_data *data = dev->data;
 	if (data->downshift_level > data->resume_level) {
 		analog_axis_hires_set_poll_level(dev, data->resume_level);
-		LOG_INF("Resume to level %d, poll per %d ms", 
+		LOG_INF("Resume to level %d, poll per %d ms",
 			data->downshift_level, data->poll_period_ms);
+	}
+
+	if (cfg->has_gpio_poll_period_en) {
+		gpio_pin_set_dt(&cfg->gpio_poll_period_en, 1);
 	}
 }
 
@@ -478,6 +490,11 @@ static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 		const struct analog_axis_hires_channel_config *axis_cfg = &cfg->channel_cfg[i];
 		LOG_INF("Setting up channel %d, ADC channel %d", i, axis_cfg->adc.channel_id);
 
+		// LOG_INF("avdd-gpios: port=%p pin=%u dt_flags=%u",
+		// 	axis_cfg->gpio_avdd.port,
+		// 	axis_cfg->gpio_avdd.pin,
+		// 	axis_cfg->gpio_avdd.dt_flags);
+
 		if (axis_cfg->has_gpio_avdd) {
 			/* Check if AVDD GPIO is defined in device tree */
 			if (!device_is_ready(axis_cfg->gpio_avdd.port)) {
@@ -506,6 +523,11 @@ static void analog_axis_hires_thread(void *arg1, void *arg2, void *arg3)
 	}
 
 	LOG_INF("All channels setup complete, entering poll loop");
+
+	if (cfg->has_gpio_poll_period_en) {
+		gpio_pin_set_dt(&cfg->gpio_poll_period_en, 1);
+		LOG_INF("poll-period-en-gpios enabled");
+	}
 
 	while (true) {
 #ifdef CONFIG_PM_DEVICE
@@ -639,6 +661,30 @@ static int analog_axis_hires_init(const struct device *dev)
 		data->resume_level = 0;
 	}
 
+	if (cfg->has_gpio_poll_period_en) {
+		if (!cfg->has_poll_period_downshift_ms) {
+			LOG_ERR("poll-period-en-gpios requires poll-period-downshift-ms");
+			return;
+		}
+
+		// LOG_INF("poll-period-en-gpios: has_gpio=%d port=%p pin=%u dt_flags=%u",
+		// 		cfg->has_gpio_poll_period_en, 
+		// 		cfg->gpio_poll_period_en.port,
+		// 		cfg->gpio_poll_period_en.pin,
+		// 		cfg->gpio_poll_period_en.dt_flags);
+
+		if (!device_is_ready(cfg->gpio_poll_period_en.port)) {
+			LOG_ERR("poll-period-en-gpios GPIO not ready");
+			return;
+		}
+
+		int err = gpio_pin_configure_dt(&cfg->gpio_poll_period_en, GPIO_OUTPUT_INACTIVE);
+		if (err != 0) {
+			LOG_ERR("Setup poll-period-en-gpios GPIO failed (%d)", err);
+			return;
+		}
+	}
+
 	analog_axis_hires_reset_calib_state(dev, true);
 
 #ifdef CONFIG_PM_DEVICE
@@ -690,10 +736,6 @@ static int analog_axis_hires_attr_set(const struct device *dev, enum sensor_chan
     }
 
     switch ((uint32_t)attr) {
-    case ANALOG_AXIS_HIRES_ATTR_SUSPEND:
-        analog_axis_hires_suspend(dev);
-        break;
-
 		case ANALOG_AXIS_HIRES_ATTR_RESUME:
         analog_axis_hires_resume(dev);
         break;
@@ -776,6 +818,8 @@ static int analog_axis_hires_pm_action(const struct device *dev,
 		.num_downshift_levels = (ARRAY_SIZE(analog_axis_hires_downshift_##inst) > 1) ?		\
 			(ARRAY_SIZE(analog_axis_hires_downshift_##inst) - 1) / 2 : 0,			\
 		.has_poll_period_downshift_ms = (ARRAY_SIZE(analog_axis_hires_downshift_##inst) > 0),	\
+		.gpio_poll_period_en = GPIO_DT_SPEC_INST_GET_OR(inst, poll_period_en_gpios, {0}),		\
+		.has_gpio_poll_period_en = DT_INST_PROP_HAS_IDX(inst, poll_period_en_gpios, 0),		\
 		.channel_cfg = analog_axis_hires_channel_cfg_##inst,					\
 		.channel_data = analog_axis_hires_channel_data_##inst,					\
 		.calibration = analog_axis_hires_calibration_##inst,					\

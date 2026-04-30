@@ -3,7 +3,7 @@
 
 description: Texas Instrument ADS1220 IDAC GPIO controller
 
-compatible: "ti,ads1220-idac"
+compatible: "ti,ads1220-gpio"
 
 include: [gpio-controller.yaml]
 

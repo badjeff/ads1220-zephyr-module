@@ -23,6 +23,8 @@
 #define ADC_CONTEXT_USES_KERNEL_TIMER
 #include <adc_context.h>
 
+#include <zephyr/drivers/adc/ads1220.h>
+
 LOG_MODULE_REGISTER(ads1220, CONFIG_ADC_LOG_LEVEL);
 
 #define ADS1220_REF_INTERNAL	2048  /* Internal reference voltage in mV */
@@ -145,6 +147,7 @@ struct ads1220_data {
 	struct adc_context ctx;
 	struct k_sem acq_sem;
 	struct k_sem drdy_sem;
+	bool is_active;
 	struct gpio_callback callback_drdy;
 	int32_t *buffer;
 	int32_t *buffer_ptr;
@@ -750,7 +753,7 @@ static int ads1220_perform_read(const struct device *dev,
 		k_sem_reset(&data->drdy_sem);
 	}
 
-	ret = ads1220_command(dev, ADS1220_START_CMD);
+	ret = ads1220_device_resume(dev);
 	if (ret != 0) {
 		goto error;
 	}
@@ -865,15 +868,53 @@ static int ads1220_device_reset(const struct device *dev)
 	return 0;
 }
 
+int ads1220_device_resume(const struct device *dev)
+{
+	struct ads1220_data *data = dev->data;
+
+	if (data->is_active) {
+		return 0;
+	}
+
+	int ret = ads1220_command(dev, ADS1220_START_CMD);
+	if (ret != 0) {
+		LOG_WRN("fail to start ADS1220 device");
+		return ret;
+	}
+	data->is_active = true;
+
+	LOG_INF("started");
+	return ret;
+}
+
+int ads1220_device_suspend(const struct device *dev)
+{
+	struct ads1220_data *data = dev->data;
+
+	if (!data->is_active) {
+		return 0;
+	}
+
+	int ret = ads1220_command(dev, ADS1220_POWERDOWN_CMD);
+	if (ret != 0) {
+		LOG_WRN("fail to powerdown ADS1220 device");
+		return ret;
+	}
+	data->is_active = false;
+
+	LOG_INF("powerdown");
+	return ret;
+}
+
 #if defined CONFIG_PM_DEVICE
 static int ads1220_pm_action(const struct device *dev,
 			       enum pm_device_action action)
 {
 	switch (action) {
 	case PM_DEVICE_ACTION_RESUME:
-		return ads1220_command(dev, ADS1220_START_CMD);
+		return ads1220_device_resume(dev);
 	case PM_DEVICE_ACTION_SUSPEND:
-		return ads1220_command(dev, ADS1220_POWERDOWN_CMD);
+		return ads1220_device_suspend(dev);
 	default:
 		return -EINVAL;
 	}
@@ -910,6 +951,7 @@ static int ads1220_init(const struct device *dev)
 	data->last_config3 = 0x00;
 	data->has_idac_ua = cfg->has_idac_ua;
 	data->idac_ua = cfg->idac_ua;
+	data->is_active = false;
 
 	ret = ads1220_configure_gpio(dev);
 	if (ret != 0) {
@@ -947,7 +989,7 @@ static int ads1220_init(const struct device *dev)
 
 DT_INST_FOREACH_STATUS_OKAY(ADC_ADS1220_INST_DEFINE)
 
-static int ads1220_set_idac_ua_by_reg(uint16_t reg, uint16_t ua, bool write) {
+int ads1220_set_idac_ua_by_reg(uint16_t reg, uint16_t ua, bool write) {
 
 #define EXEC__ADS1220_SET_IDAC_UA_BY_REG(n) \
     if (DT_INST_REG_ADDR(n) == reg) { \
@@ -959,5 +1001,26 @@ static int ads1220_set_idac_ua_by_reg(uint16_t reg, uint16_t ua, bool write) {
     return 0;
 }
 
-int (*_ptr_ads1220_set_idac_ua_by_reg)(uint16_t, uint16_t, bool) 
-	= ads1220_set_idac_ua_by_reg;
+int ads1220_device_resume_by_reg(uint16_t reg) {
+
+#define EXEC__ADS1220_DEVICE_RESUME_BY_REG(n) \
+    if (DT_INST_REG_ADDR(n) == reg) { \
+        return ads1220_device_resume(data_##n.dev); \
+    }
+
+    DT_INST_FOREACH_STATUS_OKAY(EXEC__ADS1220_DEVICE_RESUME_BY_REG)
+
+    return 0;
+}
+
+int ads1220_device_suspend_by_reg(uint16_t reg) {
+
+#define EXEC__ADS1220_DEVICE_SUSPEND_BY_REG(n) \
+    if (DT_INST_REG_ADDR(n) == reg) { \
+        return ads1220_device_suspend(data_##n.dev); \
+    }
+
+    DT_INST_FOREACH_STATUS_OKAY(EXEC__ADS1220_DEVICE_SUSPEND_BY_REG)
+
+    return 0;
+}

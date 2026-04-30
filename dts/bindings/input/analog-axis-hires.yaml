@@ -49,6 +49,13 @@ properties:
       5000ms idle switches to 15ms, then after 9000ms more idle switches to 100ms,
       then after 11000ms more idle switches to 1300ms.
 
+  poll-period-en-gpios:
+    type: phandle-array
+    description: |
+      This property only active, if poll-period-downshift-ms is presented.
+      GPIO pin to enable the analog power supply.
+      Pin is driven high while polling is active.
+
 child-binding:
   properties:
     io-channels:

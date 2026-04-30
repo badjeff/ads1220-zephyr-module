@@ -3,6 +3,6 @@
 
 if GPIO
 
-rsource "Kconfig.ads1220_idac"
+rsource "Kconfig.ads1220"
 
 endif # GPIO

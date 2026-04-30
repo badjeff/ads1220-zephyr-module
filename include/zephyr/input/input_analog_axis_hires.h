@@ -116,11 +116,24 @@ int analog_axis_hires_calibration_set(const struct device *dev,
 				int channel,
 				struct analog_axis_hires_calibration *cal);
 
+/**
+ * @brief Suspend analog axis hi-res sampling.
+ *
+ * @param dev Analog axis hi-res device.
+ */
+void analog_axis_hires_suspend(const struct device *dev);
+
+/**
+ * @brief Resume analog axis hi-res sampling.
+ *
+ * @param dev Analog axis hi-res device.
+ */
+void analog_axis_hires_resume(const struct device *dev);
+
 /** @} */
 
 // Runtime configurable attributes
 enum analog_axis_hires_attributes {
-	ANALOG_AXIS_HIRES_ATTR_SUSPEND,
   ANALOG_AXIS_HIRES_ATTR_RESUME
 };
 

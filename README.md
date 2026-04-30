@@ -4,7 +4,7 @@ This module provides three drivers for high-resolution analog input:
 
 1. **ADS1220 ADC Driver** - Texas Instruments 24-bit SPI ADC with 4 differential input channels, configurable gain (1-128x), multiple data rates (20-1000 SPS), and optional DRDY interrupt support.
 
-2. **ADS1220 IDAC GPIO Controller** - GPIO controller that maps GPIO pin states to ADS1220 IDAC (excitation current) settings. Allows dynamic IDAC switching via standard GPIO API.
+2. **ADS1220 GPIO Controller** - GPIO controller with dual functionality: maps GPIO pin states to ADS1220 IDAC (excitation current) settings, and device suspend/resume control. Allows dynamic IDAC switching and power gating via standard GPIO API.
 
 3. **Analog Axis Hi-Res Input Driver** - Fork of Zephyr's `analog-axis` driver with 24-bit buffering, per-channel auto-calibration, and multi-configuration per device. Provides all other inherited features from original driver.
 
@@ -21,10 +21,11 @@ This module provides three drivers for high-resolution analog input:
 - Programmable IDAC excitation current (0/10/50/100/250/500/1000/2000 uA)
 - Configurable IDAC1/IDAC2 output pins per channel
 
-### ADS1220 IDAC GPIO Controller
+### ADS1220 GPIO Controller
 - Switching IDAC in runtime
-- Allow only enabling excitation only when sensor is actively being read
-- Example: Be used with `avdd-gpios` in analog-axis for combined power + excitation control
+- Suspend/resume ADS1220 device via GPIO (drives external power switch)
+- Allow enabling excitation and power only when sensor is actively being read
+- Example: Used with `avdd-gpios` and `poll-period-en-gpios` in analog-axis for combined power + excitation control
 
 ### Analog Axis Hi-Res Input Driver
 - High-resolution ADC support (16-bit+)
@@ -231,7 +232,7 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | `zephyr,input-negative` | int | Negative input channel (0..3: AIN0..3 / 4:AVSS / 5:REFP / 6:AVDD / 7:SHORT) |
 | `zephyr,current-source-pin` | uint8-array | IDAC1/IDAC2 connection [IDAC1, IDAC2], requires `CONFIG_ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN` |
 
-### ADS1220 IDAC GPIO Controller Node (`ti,ads1220-idac`)
+### ADS1220 GPIO Controller Node (`ti,ads1220-gpio`)
 | Property | Type | Description |
 |----------|------|-------------|
 | `dev-reg` | int | ADS1220 instance `reg` property value to match with ADC device |
@@ -239,6 +240,10 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | `idac-ua-low` | int | IDAC current when GPIO pin is cleared (0/10/50/100/250/500/1000/2000 uA) |
 | `skip-reg-write-high` | boolean | Skip writing to ADS1220 config when output is set high (use adc-channel's current-source-pin instead) |
 | `skip-reg-write-low` | boolean | Skip writing to ADS1220 config when output is cleared (use adc-channel's current-source-pin instead) |
+
+The GPIO controller exposes two pins:
+- `ADS1220_GPIO_PIN_IDAC` (1): Controls IDAC excitation current level
+- `ADS1220_GPIO_PIN_EN` (0): Controls ADS1220 device power state (suspend/resume)
 
 ### Analog Axis Hi-Res Node (`analog-axis-hires`)
 | Property | Type | Description |
