@@ -18,7 +18,7 @@ This module provides three drivers for high-resolution analog input:
 - Internal or external reference support
 - Optional DRDY GPIO interrupt (fallback to timed polling)
 - Low-side power switch for RTD/load cell applications
-- Programmable IDAC excitation current (0/10/50/100/250/500/1000/2000 uA)
+- Programmable IDAC excitation current (0/10/50/100/250/500/1000/1500 uA)
 - Configurable IDAC1/IDAC2 output pins per channel
 
 ### ADS1220 GPIO Controller
@@ -108,7 +108,7 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
         /* enable closing low side power switch during a measurement */
         // low-side-power-switch;
 
-        /* IDAC excitation current in microamperes (0/10/50/100/250/500/1000/2000) */
+        /* IDAC excitation current in microamperes (0/10/50/100/250/500/1000/1500) */
         // idac-ua = <500>;
 
         /*
@@ -219,7 +219,7 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | `spi-max-frequency` | int | SPI clock frequency |
 | `drdy-gpios` | phandle-array | Data ready GPIO (optional) |
 | `low-side-power-switch` | boolean | Enable low-side power switch |
-| `idac-ua` | int | IDAC current (0/10/50/100/250/500/1000/2000 uA), default 0 (disabled) |
+| `idac-ua` | int | IDAC current (0/10/50/100/250/500/1000/1500 uA), default 0 (disabled) |
 
 ### Channel Node
 | Property | Type | Description |
@@ -236,8 +236,8 @@ CONFIG_PM_DEVICE_RUNTIME=y
 | Property | Type | Description |
 |----------|------|-------------|
 | `dev-reg` | int | ADS1220 instance `reg` property value to match with ADC device |
-| `idac-ua-high` | int | IDAC current when GPIO pin is set high (0/10/50/100/250/500/1000/2000 uA) |
-| `idac-ua-low` | int | IDAC current when GPIO pin is cleared (0/10/50/100/250/500/1000/2000 uA) |
+| `idac-ua-high` | int | IDAC current when GPIO pin is set high (0/10/50/100/250/500/1000/1500 uA) |
+| `idac-ua-low` | int | IDAC current when GPIO pin is cleared (0/10/50/100/250/500/1000/1500 uA) |
 | `skip-reg-write-high` | boolean | Skip writing to ADS1220 config when output is set high (use adc-channel's current-source-pin instead) |
 | `skip-reg-write-low` | boolean | Skip writing to ADS1220 config when output is cleared (use adc-channel's current-source-pin instead) |
 
@@ -305,7 +305,7 @@ Setting last `downshift-period` rate to 0 stops the polling timer and drives `po
 
 5. **Power Consumption**: The poll mode driver continuously samples. For battery-powered devices, consider reducing `poll-period-ms` or implementing dynamic polling based on activity.
 
-6. **IDAC Current Sources**: The ADS1220 provides two programmable current sources (IDAC1/IDAC2) for exciting sensors like RTDs. Use `idac-ua` to set the current level (10-2000 uA) and `zephyr,current-source-pin` to configure which pins the IDACs are connected to:
+6. **IDAC Current Sources**: The ADS1220 provides two programmable current sources (IDAC1/IDAC2) for exciting sensors like RTDs. Use `idac-ua` to set the current level (10-1500 uA) and `zephyr,current-source-pin` to configure which pins the IDACs are connected to:
    - 0: Disabled
    - 1: AIN0/REFP1
    - 2: AIN1

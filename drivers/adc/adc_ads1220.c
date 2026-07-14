@@ -62,7 +62,7 @@ LOG_MODULE_REGISTER(ads1220, CONFIG_ADC_LOG_LEVEL);
 #define ADS1220_IDAC_UA_250		4       /* 100: IDAC = 250 uA */
 #define ADS1220_IDAC_UA_500		5       /* 101: IDAC = 500 uA */
 #define ADS1220_IDAC_UA_1000	6       /* 110: IDAC = 1000 uA */
-#define ADS1220_IDAC_UA_2000	7       /* 111: IDAC = 2000 uA */
+#define ADS1220_IDAC_UA_1500	7       /* 111: IDAC = 1500 uA */
 
 #define ADS1220_RESET_DELAY	1      /* Reset delay in ms */
 
@@ -131,7 +131,7 @@ enum ads1220_idac_conn {
 	ADS1220_IDAC_AIN2 = 0x03,     	/* 011: IDAC1|2 connected to AIN2 */
 	ADS1220_IDAC_AIN3_REFP1 = 0x04, /* 100: IDAC1|2 connected to AIN3/REFN1 */
 	ADS1220_IDAC_REFP0 = 0x05,     	/* 101: IDAC1|2 connected to REFP0 */
-	ADS1220_IDAC_REFN0 = 0x06,     	/* 110: IDAC1|2 connected to REFP0 */
+	ADS1220_IDAC_REFN0 = 0x06,     	/* 110: IDAC1|2 connected to REFN0 */
 };
 
 struct ads1220_config {
@@ -178,7 +178,7 @@ static inline int ads1220_transceive(const struct device *dev,
 
 	struct spi_buf rx_buf = {
 		.buf = recv_buf,
-		.len = send_buf_len,
+		.len = recv_buf_len,
 	};
 	const struct spi_buf_set rx = {
 		.buffers = &rx_buf,
@@ -407,8 +407,8 @@ static inline int ads1220_idac_ua_to_bit(uint16_t idac_ua, uint8_t *val)
 	case 1000:
 		*val = ADS1220_IDAC_UA_1000;
 		break;
-	case 2000:
-		*val = ADS1220_IDAC_UA_2000;
+	case 1500:
+		*val = ADS1220_IDAC_UA_1500;
 		break;
 	default:
 		return -EINVAL;

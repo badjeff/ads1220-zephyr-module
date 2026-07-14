@@ -20,16 +20,16 @@ properties:
     required: true
     description: |
       IDAC current (in microamperes) when output pin is set high.
-      Valid values: 0, 10, 50, 100, 250, 500, 1000, 2000.
-    enum: [0, 10, 50, 100, 250, 500, 1000, 2000]
+      Valid values: 0, 10, 50, 100, 250, 500, 1000, 1500.
+    enum: [0, 10, 50, 100, 250, 500, 1000, 1500]
 
   idac-ua-low:
     type: int
     required: true
     description: |
       IDAC current (in microamperes) when output pin is set low.
-      Valid values: 0, 10, 50, 100, 250, 500, 1000, 2000.
-    enum: [0, 10, 50, 100, 250, 500, 1000, 2000]
+      Valid values: 0, 10, 50, 100, 250, 500, 1000, 1500.
+    enum: [0, 10, 50, 100, 250, 500, 1000, 1500]
 
   skip-reg-write-high:
     type: boolean
