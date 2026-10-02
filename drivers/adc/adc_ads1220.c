@@ -717,22 +717,28 @@ static int ads1220_read_sample(const struct device *dev,
 				 uint32_t channels, uint32_t *buffer)
 {
 	int ret;
-	uint8_t tx_buf[3] = { ADS1220_RDATA_CMD, 0, 0 };
-	uint8_t rx_buf[3] = { 0 };
+	uint8_t tx_buf[4] = { ADS1220_RDATA_CMD, 0, 0, 0 };
+	uint8_t rx_buf[4] = { 0 };
 
 	ARG_UNUSED(channels);
 
-	ret = ads1220_transceive(dev, tx_buf, 3, rx_buf, 3);
+	ret = ads1220_transceive(dev, tx_buf, 4, rx_buf, 4);
 	if (ret != 0) {
 		return ret;
 	}
 
-	*buffer = (int32_t)sys_get_be24(rx_buf);
+	/*
+	 * RDATA is 8 clocks, then the 24-bit result is shifted out MSB first
+	 * (SBAS501 8.5.4/8.5.5), so the transaction is 4 bytes and the result
+	 * starts at rx_buf[1]; rx_buf[0] is the don't-care clocked in with the
+	 * command byte. Same convention as ads1220_reg_read() above.
+	 */
+	*buffer = (int32_t)sys_get_be24(&rx_buf[1]);
 	if (*buffer & 0x00800000) {
 		*buffer |= 0xFF000000;
 	}
 
-	// LOG_HEXDUMP_DBG(rx_buf, 3, "raw sample");
+	// LOG_HEXDUMP_DBG(rx_buf, 4, "raw sample");
 
 	return 0;
 }
