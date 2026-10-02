@@ -45,7 +45,8 @@ LOG_MODULE_REGISTER(ads1220, CONFIG_ADC_LOG_LEVEL);
 #define ADS1220_MUX_MASK						GENMASK(7, 4)  /* CONFIG0: MUX selection bits */
 #define ADS1220_GAIN_MASK						GENMASK(3, 1)  /* CONFIG0: PGA gain selection bits */
 #define ADS1220_DR_MASK							GENMASK(7, 5)  /* CONFIG1: Data rate selection bits */
-#define ADS1220_MODE_MASK						GENMASK(2, 2)  /* CONFIG1: Conversion mode: 0=continuous, 1=single-shot */
+#define ADS1220_CM_MASK						  GENMASK(2, 2)  /* CONFIG1: CM conversion mode: 0=single-shot, 1=continuous */
+#define ADS1220_VREF_MASK					  GENMASK(7, 6)  /* CONFIG2: Voltage reference selection bits */
 #define ADS1220_IDAC_CURRENT_MASK		GENMASK(2, 0)  /* CONFIG2: IDAC current selection bits */
 #define ADS1220_I1MUX_MASK					GENMASK(7, 5)  /* CONFIG3: IDAC1 mux selection bits */
 #define ADS1220_I2MUX_MASK					GENMASK(4, 2)  /* CONFIG3: IDAC2 mux selection bits */
@@ -507,8 +508,7 @@ static int ads1220_setup(const struct device *dev,
 
 	ads1220_data_rate_to_bit(acq_time, &data_rate, &ready_time_us);
 
-	config1 = (config1 & ~(ADS1220_DR_MASK | ADS1220_MODE_MASK)) |
-		  data_rate | FIELD_PREP(ADS1220_MODE_MASK, 1);
+	config1 = (config1 & ~(ADS1220_DR_MASK | ADS1220_CM_MASK)) | data_rate;
 	data->ready_time = K_USEC(ready_time_us + (ready_time_us / 10));
 
 	ads1220_vref_to_bit(channel_cfg->reference, &vref_value);
@@ -525,14 +525,15 @@ static int ads1220_setup(const struct device *dev,
 		idac_valid = !idac_ua_err;
 	}
 
-	config2 = (config2 & ~0x30) | (vref_value << 4);
+	config2 = (config2 & ~ADS1220_VREF_MASK) |
+		  FIELD_PREP(ADS1220_VREF_MASK, vref_value);
 	config2 = (config2 & ~0x08) | psw_value;
 	if (idac_valid) {
 		config2 = (config2 & ~ADS1220_IDAC_CURRENT_MASK) |
 			  FIELD_PREP(ADS1220_IDAC_CURRENT_MASK, idac_current);
 	}
 	// LOG_DBG("CONFIG2: VREF=0x%02X, PSW=%d, IDAC=%u",
-	// 	(config2 >> 4) & 0x03, (config2 >> 3) & 0x01,
+	// 	(config2 >> 6) & 0x03, (config2 >> 3) & 0x01,
 	// 	(unsigned int)(config2 & ADS1220_IDAC_CURRENT_MASK));
 
 #if defined(CONFIG_ADC_CONFIGURABLE_EXCITATION_CURRENT_SOURCE_PIN)
