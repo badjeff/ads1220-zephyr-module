@@ -44,6 +44,7 @@ LOG_MODULE_REGISTER(ads1220, CONFIG_ADC_LOG_LEVEL);
 
 #define ADS1220_MUX_MASK						GENMASK(7, 4)  /* CONFIG0: MUX selection bits */
 #define ADS1220_GAIN_MASK						GENMASK(3, 1)  /* CONFIG0: PGA gain selection bits */
+#define ADS1220_PGA_BYPASS_MASK			GENMASK(0, 0)  /* CONFIG0: 0=PGA enabled, 1=PGA bypassed */
 #define ADS1220_DR_MASK							GENMASK(7, 5)  /* CONFIG1: Data rate selection bits */
 #define ADS1220_CM_MASK						  GENMASK(2, 2)  /* CONFIG1: CM conversion mode: 0=single-shot, 1=continuous */
 #define ADS1220_VREF_MASK					  GENMASK(7, 6)  /* CONFIG2: Voltage reference selection bits */
@@ -141,6 +142,7 @@ struct ads1220_config {
 	bool low_side_power_switch;
 	bool has_idac_ua;
 	uint16_t idac_ua;
+	bool pga_bypass;
 };
 
 struct ads1220_data {
@@ -499,12 +501,29 @@ static int ads1220_setup(const struct device *dev,
 		return mux_err;
 	}
 
-	config0 = (config0 & ~(ADS1220_MUX_MASK | ADS1220_GAIN_MASK)) |
+	bool pga_bypass = cfg->pga_bypass;
+
+	/* PGA_BYPASS must be 1 when AINN is tied to AVSS (MUX 1000-1011) and
+	 * for the diagnostic modes 1100-1110 (REFP/REFN, AVDD/AVSS, shorted).
+	 */
+	if (mux_value >= ADS1220_MUX_P_AIN0_N_AVSS) {
+		pga_bypass = true;
+	}
+
+	if (pga_bypass && gain > ADS1220_GAIN_4) {
+		LOG_WRN("PGA bypass requires gain <= 4, clamping to 4");
+		gain = ADS1220_GAIN_4;
+	}
+
+	config0 = (config0 & ~(ADS1220_MUX_MASK | ADS1220_GAIN_MASK |
+			       ADS1220_PGA_BYPASS_MASK)) |
 		   FIELD_PREP(ADS1220_MUX_MASK, mux_value) |
-		   FIELD_PREP(ADS1220_GAIN_MASK, gain);
-	// LOG_DBG("CONFIG0: MUX=0x%02X, GAIN=0x%02X",
+		   FIELD_PREP(ADS1220_GAIN_MASK, gain) |
+		   FIELD_PREP(ADS1220_PGA_BYPASS_MASK, pga_bypass);
+	// LOG_DBG("CONFIG0: MUX=0x%02X, GAIN=0x%02X, BYPASS=%d",
 	// 	(unsigned int)(config0 & ADS1220_MUX_MASK),
-	// 	(unsigned int)(config0 & ADS1220_GAIN_MASK));
+	// 	(unsigned int)(config0 & ADS1220_GAIN_MASK),
+	// 	!!(config0 & ADS1220_PGA_BYPASS_MASK));
 
 	ads1220_data_rate_to_bit(acq_time, &data_rate, &ready_time_us);
 
@@ -991,6 +1010,7 @@ static int ads1220_init(const struct device *dev)
 		.low_side_power_switch = DT_INST_PROP(n, low_side_power_switch),	\
 		.has_idac_ua = DT_INST_NODE_HAS_PROP(n, idac_ua),		\
 		.idac_ua = DT_INST_PROP_OR(n, idac_ua, 0),			\
+		.pga_bypass = DT_INST_PROP_OR(n, pga_bypass, false),		\
 	};									\
 	static struct ads1220_data data_##n;					\
 	DEVICE_DT_INST_DEFINE(n, ads1220_init,				\

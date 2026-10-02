@@ -26,6 +26,18 @@ properties:
       between AIN3/REFN1 and AVSS is turned on during conversion to reduce
       input leakage current. This is useful for RTD applications.
 
+  pga-bypass:
+    type: boolean
+    required: false
+    description: |
+      Bypass the PGA (CONFIG0 bit 0). Only gains 1, 2 and 4 are valid while
+      the PGA is bypassed; a higher gain requested by a channel is clamped
+      to 4. Note that the driver forces bypass on regardless of this property
+      for MUX settings that tie AINN to AVSS (1000-1011) and for the
+      REFP/REFN, AVDD/AVSS and shorted-input diagnostic modes (1100-1110),
+      so this property only adds a manual bypass on other MUX settings.
+      Leaving it unset (default) keeps the PGA enabled everywhere else.
+
   idac-ua:
     type: int
     required: false
