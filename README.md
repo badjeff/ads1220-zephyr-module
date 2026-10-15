@@ -1,12 +1,15 @@
-# ADS1220 ADC Module
+# ADS1220 ADC Zephyr Module
 
-This module provides three drivers for high-resolution analog input:
+This module provides two drivers for the Texas Instruments ADS1220 24-bit SPI ADC:
 
 1. **ADS1220 ADC Driver** - Texas Instruments 24-bit SPI ADC with 4 differential input channels, configurable gain (1-128x), multiple data rates (20-1000 SPS), and optional DRDY interrupt support.
 
 2. **ADS1220 GPIO Controller** - GPIO controller with dual functionality: maps GPIO pin states to ADS1220 IDAC (excitation current) settings, and device suspend/resume control. Allows dynamic IDAC switching and power gating via standard GPIO API.
 
-3. **Analog Axis Hi-Res Input Driver** - Fork of Zephyr's `analog-axis` driver with 24-bit buffering, per-channel auto-calibration, and multi-configuration per device. Provides all other inherited features from original driver.
+The examples below also use the **Analog Axis Hi-Res Input Driver** (`compatible = "analog-axis-hires"`),
+a generic input driver that is provided by a separate module,
+[`analog-axis-hires-input-zephyr-module`](https://github.com/badjeff/analog-axis-hires-input-zephyr-module). Add both modules
+on your west manifest to build these examples.
 
 ## Features
 
@@ -27,14 +30,6 @@ This module provides three drivers for high-resolution analog input:
 - Allow enabling excitation and power only when sensor is actively being read
 - Example: Used with `avdd-gpios` and `poll-period-en-gpios` in analog-axis for combined power + excitation control
 
-### Analog Axis Hi-Res Input Driver
-- High-resolution ADC support (16-bit+)
-- int32_t buffer for 24-bit ADC values
-- Multi-configuration per device
-- Per-channel auto-calibration support
-- Poll period downshift - Dynamic polling rate reduction for power saving
-- Other inherited features from original driver
-
 ## Installation
 
 Only GitHub actions builds are covered here. Local builds are different for each user, therefore it's not possible to cover all cases.
@@ -53,6 +48,9 @@ manifest:
     ...
     # START #####
     - name: ads1220-zephyr-module
+      remote: badjeff
+      revision: main
+    - name: analog-axis-hires-input-zephyr-module
       remote: badjeff
       revision: main
     # END #######
@@ -150,20 +148,41 @@ Now, update your `board.overlay` adding the necessary bits (update the pins for 
         status = "okay";
 
         /* Set polling for bluetooth (max rate: 7.5ms) */
-        poll-period-ms = <8>; // 8ms = ~125 Hz < 175 SPS
+        poll-period-ms = <8>; // 8ms = ~125 Hz (ignored when poll-period-downshift-ms is set)
+
+        /*
+        polls at 8ms on init, then after
+        5000ms idle switches to 20ms, then after
+        9000ms more idle switches to 100ms, then after
+        11000ms more idle switches to 1300ms
+        */
+        poll-period-downshift-ms = <8 5000 20 9000 100 11000 1300>;
 
         axis-y {
             io-channels = <&adc_ads1220 0>;
 
+            /*
+            GPIO pin to enable the analog power supply for this channel.
+            Pin is driven high while sampling this ADC channel.
+            */
+            avdd-gpios = <&gpio1 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+
             /* netural raw value from Wheatstone bridges via ADS1220 */
             /* NOTE: depends on zephyr,gain in adc_ads1220_ch0 */
-            in-min = <329030>;
-            in-max = <1930010>;
-            in-deadzone = <5>;
+            in-min = <( -21 - 655300 )>;
+            in-max = <( -21 + 655300 )>;
+
+            /*
+            Per-channel auto-calibration (optional): collect 100 samples on
+            startup, re-center in-min/in-max around the measured neutral value,
+            and scale the deadzone from the calibrated range (110% here).
+            */
+            in-calib-cycle = <100>;
+            in-deadzone-calib-scale-pctg = <110>; /* or, in-deadzone = <750>; */
 
             /* clamp output */
-            out-min = <( -1024 )>;
-            out-max = <( 65535 )>;
+            out-min = <( -127 )>;
+            out-max = <(  127 )>;
             // skip-change-comparator; /* uncomment this to debug */
 
             zephyr,axis-type = <INPUT_EV_ABS>;
@@ -202,7 +221,9 @@ CONFIG_PM_DEVICE_RUNTIME=y
 
 ## Configuration Options
 
-### Analog Axis Hi-Res Kconfig (`drivers/input/Kconfig.analog_axis_hires`)
+### Analog Axis Hi-Res Kconfig
+Defined by the separate [`analog-axis-hires-input-zephyr-module`](https://github.com/badjeff/analog-axis-hires-input-zephyr-module)
+(`drivers/input/Kconfig.analog_axis_hires`).
 | Option | Description | Default |
 |--------|-------------|---------|
 | `CONFIG_INPUT_ANALOG_AXIS_HIRES` | Enable analog axis hires driver | y |
@@ -246,6 +267,7 @@ The GPIO controller exposes two pins:
 - `ADS1220_GPIO_PIN_EN` (0): Controls ADS1220 device power state (suspend/resume)
 
 ### Analog Axis Hi-Res Node (`analog-axis-hires`)
+Provided by the separate [`analog-axis-hires-input-zephyr-module`](https://github.com/badjeff/analog-axis-hires-input-zephyr-module).
 | Property | Type | Description |
 |----------|------|-------------|
 | `poll-period-ms` | int | Poll period in milliseconds |

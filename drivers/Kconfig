@@ -3,4 +3,3 @@
 
 rsource "adc/Kconfig"
 rsource "gpio/Kconfig"
-rsource "input/Kconfig"
